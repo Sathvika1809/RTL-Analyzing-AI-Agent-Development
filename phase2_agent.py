@@ -199,7 +199,7 @@ def analyze_file(filepath: Path) -> dict:
     Returns a dict with all the analysis info.
     """
     print(f"\n{'─'*50}")
-    print(f"📄 Analyzing: {filepath.name}")
+    print(f" Analyzing: {filepath.name}")
     print(f"{'─'*50}")
 
     # ── READ THE FILE ──────────────────────────────
@@ -215,7 +215,7 @@ def analyze_file(filepath: Path) -> dict:
 
     # Check file size - very large files exceed the model's context window
     if len(rtl_code) > MAX_FILE_SIZE:
-        print(f"  ⚠️  File too large ({len(rtl_code)} chars). Truncating to {MAX_FILE_SIZE} chars.")
+        print(f"   File too large ({len(rtl_code)} chars). Truncating to {MAX_FILE_SIZE} chars.")
         rtl_code = rtl_code[:MAX_FILE_SIZE] + "\n\n// ... [truncated] ..."
 
     file_stats = {
@@ -224,7 +224,7 @@ def analyze_file(filepath: Path) -> dict:
         "size_kb":    round(len(rtl_code) / 1024, 1)
     }
 
-    print(f"  📊 File stats: {file_stats['lines']} lines | {file_stats['size_kb']} KB")
+    print(f"  File stats: {file_stats['lines']} lines | {file_stats['size_kb']} KB")
 
     # ── BUILD THE PROMPT ───────────────────────────
     # We insert the filename and code into our template
@@ -233,20 +233,20 @@ def analyze_file(filepath: Path) -> dict:
         rtl_code=rtl_code
     )
 
-    print(f"  🤖 Sending to {MODEL_NAME}... (please wait)")
+    print(f"  Sending to {MODEL_NAME}... (please wait)")
 
     # ── CALL THE MODEL ─────────────────────────────
     result = call_ollama(prompt)
 
     if not result["success"]:
-        print(f"  ❌ Model call failed: {result['error']}")
+        print(f"  Model call failed: {result['error']}")
         return {
             "file":    str(filepath),
             "success": False,
             "error":   result["error"]
         }
 
-    print(f"  ✅ Done in {result['elapsed']:.1f}s | {result.get('tokens', '?')} tokens")
+    print(f"  Done in {result['elapsed']:.1f}s | {result.get('tokens', '?')} tokens")
 
     # ── RETURN EVERYTHING ─────────────────────────
     return {
@@ -293,13 +293,13 @@ def save_markdown_report(analysis: dict, output_dir: str = REPORTS_DIR):
         f"",
         f"---",
         f"",
-        f"## 📋 Analysis",
+        f"##  Analysis",
         f"",
         analysis["raw_response"],   # The model's full structured response
         f"",
         f"---",
         f"",
-        f"## 📄 Original Source Code",
+        f"##  Original Source Code",
         f"",
         f"```systemverilog",
         analysis["rtl_content"],
@@ -312,7 +312,7 @@ def save_markdown_report(analysis: dict, output_dir: str = REPORTS_DIR):
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))
 
-    print(f"  💾 Report saved → {report_path}")
+    print(f"  Report saved → {report_path}")
     return report_path
 
 
@@ -394,16 +394,16 @@ def save_summary_report(all_results: list, output_dir: str = REPORTS_DIR):
 
         # Link to the detailed report
         base_name = Path(r["filename"]).stem
-        md_lines += [f"📄 [Full report]({base_name}_analysis.md)", f"", f"---", f""]
+        md_lines += [f" [Full report]({base_name}_analysis.md)", f"", f"---", f""]
 
     if failed:
-        md_lines += [f"## ❌ Failed Files", f""]
+        md_lines += [f"##  Failed Files", f""]
         for r in failed:
             md_lines += [f"- `{r['file']}` — {r.get('error', 'Unknown error')}"]
         md_lines += [f""]
 
     md_lines += [
-        f"## 📊 Overall Statistics",
+        f"## Overall Statistics",
         f"",
         f"| Metric | Value |",
         f"|--------|-------|",
@@ -419,7 +419,7 @@ def save_summary_report(all_results: list, output_dir: str = REPORTS_DIR):
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))
 
-    print(f"\n📊 Summary report saved → {summary_path}")
+    print(f"\n Summary report saved → {summary_path}")
     return summary_path
 
 
@@ -445,7 +445,7 @@ def run_agent(target_folder: str = None, single_file: str = None):
         # User specified a single file
         p = Path(single_file)
         if not p.exists():
-            print(f"❌ File not found: {single_file}")
+            print(f" File not found: {single_file}")
             return
         files_to_analyze = [p]
 
@@ -453,7 +453,7 @@ def run_agent(target_folder: str = None, single_file: str = None):
         # Scan a folder for .sv files
         folder = Path(target_folder or "sample_rtl")
         if not folder.exists():
-            print(f"❌ Folder not found: {folder}")
+            print(f" Folder not found: {folder}")
             print(f"   Create the folder and put .sv files in it, or use --file to specify one.")
             return
 
@@ -461,11 +461,11 @@ def run_agent(target_folder: str = None, single_file: str = None):
         files_to_analyze = sorted(folder.rglob("*.sv"))
 
         if not files_to_analyze:
-            print(f"⚠️  No .sv files found in: {folder}")
+            print(f" No .sv files found in: {folder}")
             print(f"   Make sure your files have the .sv extension")
             return
 
-    print(f"\n📁 Found {len(files_to_analyze)} file(s) to analyze:")
+    print(f"\n Found {len(files_to_analyze)} file(s) to analyze:")
     for f in files_to_analyze:
         size_kb = round(f.stat().st_size / 1024, 1)
         print(f"   • {f.name} ({size_kb} KB)")
@@ -474,10 +474,10 @@ def run_agent(target_folder: str = None, single_file: str = None):
     print(f"\n🔌 Checking Ollama connection...")
     try:
         requests.get(f"{OLLAMA_URL}/", timeout=3)
-        print(f"   ✅ Connected")
+        print(f"  Connected")
     except:
-        print(f"   ❌ Cannot reach Ollama at {OLLAMA_URL}")
-        print(f"   Run: ollama serve")
+        print(f"  Cannot reach Ollama at {OLLAMA_URL}")
+        print(f"  Run: ollama serve")
         return
 
     # ── ANALYZE EACH FILE ─────────────────────────
@@ -494,7 +494,7 @@ def run_agent(target_folder: str = None, single_file: str = None):
             json_path = save_json_result(result)
             report_paths.append(md_path)
         else:
-            print(f"  ⚠️  Skipping report for failed analysis")
+            print(f"  Skipping report for failed analysis")
 
         # Small delay between files to avoid hammering the model
         if i < len(files_to_analyze):
@@ -507,7 +507,7 @@ def run_agent(target_folder: str = None, single_file: str = None):
     # ── FINAL SUMMARY ─────────────────────────────
     succeeded = sum(1 for r in all_results if r.get("success"))
     print(f"\n{'='*60}")
-    print(f"✅ Analysis complete!")
+    print(f" Analysis complete!")
     print(f"   {succeeded}/{len(all_results)} files analyzed successfully")
     print(f"   Reports saved in: {REPORTS_DIR}/")
     print(f"{'='*60}")

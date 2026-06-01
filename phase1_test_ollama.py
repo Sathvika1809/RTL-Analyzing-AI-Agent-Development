@@ -57,13 +57,13 @@ def check_ollama_running():
     try:
         response = requests.get(f"{OLLAMA_URL}/", timeout=5)
         # If we get here, Ollama responded
-        print(f"✅ Ollama is running at {OLLAMA_URL}")
+        print(f" Ollama is running at {OLLAMA_URL}")
         print(f"   Response: {response.text.strip()}")
         return True
 
     except requests.exceptions.ConnectionError:
         # This means Ollama is NOT running
-        print(f"❌ Cannot connect to Ollama at {OLLAMA_URL}")
+        print(f" Cannot connect to Ollama at {OLLAMA_URL}")
         print()
         print("  TO FIX THIS:")
         print("  1. Make sure Ollama is installed: https://ollama.com")
@@ -72,7 +72,7 @@ def check_ollama_running():
         return False
 
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f" Unexpected error: {e}")
         return False
 
 
@@ -97,7 +97,7 @@ def list_available_models():
 
         if not models:
             # No models downloaded yet
-            print("⚠️  No models found! You need to pull one first.")
+            print("  No models found! You need to pull one first.")
             print()
             print("  Run one of these commands in your terminal:")
             print("  → ollama pull codellama        (best for code)")
@@ -106,7 +106,7 @@ def list_available_models():
             print("  → ollama pull llama3           (latest Meta model)")
             return []
 
-        print(f"✅ Found {len(models)} model(s):\n")
+        print(f" Found {len(models)} model(s):\n")
         for model in models:
             name    = model.get("name", "unknown")
             size_gb = model.get("size", 0) / 1e9   # Convert bytes → GB
@@ -115,7 +115,7 @@ def list_available_models():
         return [m["name"] for m in models]
 
     except Exception as e:
-        print(f"❌ Error listing models: {e}")
+        print(f" Error listing models: {e}")
         return []
 
 
@@ -198,14 +198,14 @@ Provide a clear, structured analysis."""
         elapsed = time.time() - start_time
 
         if response.status_code != 200:
-            print(f"❌ Model returned error status: {response.status_code}")
+            print(f" Model returned error status: {response.status_code}")
             print(response.text)
             return None
 
         result = response.json()
         answer = result.get("response", "").strip()
 
-        print(f"✅ Model responded in {elapsed:.1f} seconds\n")
+        print(f" Model responded in {elapsed:.1f} seconds\n")
         print("-" * 60)
         print("MODEL RESPONSE:")
         print("-" * 60)
@@ -214,18 +214,18 @@ Provide a clear, structured analysis."""
 
         # Also show some performance stats from the response
         tokens_per_sec = result.get("eval_count", 0) / max(result.get("eval_duration", 1), 1) * 1e9
-        print(f"\n📊 Stats: ~{tokens_per_sec:.1f} tokens/sec | "
+        print(f"\n Stats: ~{tokens_per_sec:.1f} tokens/sec | "
               f"Total tokens: {result.get('eval_count', '?')}")
 
         return answer
 
     except requests.exceptions.Timeout:
-        print("❌ Request timed out. The model is taking too long.")
+        print(" Request timed out. The model is taking too long.")
         print("   Try a smaller model like 'mistral' or 'phi3'")
         return None
 
     except Exception as e:
-        print(f"❌ Error calling model: {e}")
+        print(f" Error calling model: {e}")
         return None
 
 
@@ -254,7 +254,7 @@ def save_baseline_result(model_name: str, response_text: str):
     with open(filename, "w") as f:
         json.dump(result, f, indent=2)
 
-    print(f"\n💾 Baseline result saved to: {filename}")
+    print(f"\n Baseline result saved to: {filename}")
 
 
 # ─────────────────────────────────────────────
@@ -264,7 +264,7 @@ if __name__ == "__main__":
 
     # Step 1: Is Ollama even running?
     if not check_ollama_running():
-        print("\n⛔ Cannot proceed. Start Ollama first (run: ollama serve)")
+        print("\n Cannot proceed. Start Ollama first (run: ollama serve)")
         sys.exit(1)
 
     # Step 2: What models are available?
@@ -275,10 +275,10 @@ if __name__ == "__main__":
         model_to_test = MODEL_NAME
     elif available_models:
         model_to_test = available_models[0]
-        print(f"\n⚠️  Model '{MODEL_NAME}' not found. Using '{model_to_test}' instead.")
+        print(f"\n  Model '{MODEL_NAME}' not found. Using '{model_to_test}' instead.")
         print(f"   To use a specific model, edit MODEL_NAME at the top of this file.")
     else:
-        print("\n⛔ No models available. Run: ollama pull codellama")
+        print("\n No models available. Run: ollama pull codellama")
         sys.exit(1)
 
     # Step 3: Test RTL analysis
@@ -287,7 +287,7 @@ if __name__ == "__main__":
     # Step 4: Save the result
     if response:
         save_baseline_result(model_to_test, response)
-        print("\n✅ Phase 1 complete! Your environment is working.")
+        print("\nPhase 1 complete! Your environment is working.")
         print("   Next step: Run phase2_agent.py")
     else:
-        print("\n⚠️  Model responded but with issues. Try a different model.")
+        print("\n  Model responded but with issues. Try a different model.")
