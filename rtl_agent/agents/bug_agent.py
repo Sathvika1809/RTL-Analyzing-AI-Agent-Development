@@ -130,12 +130,13 @@ class BugAgent:
 
         #Parse Response
         #Extract structured bug data from the text response
-        parsed = self._parse_bugs(response_text)
+        parsed = self.parse_bugs(response_text)
 
         #Log for observations
 
         self._log(path.name, prompt, response_text, parsed)
-
+        print(f"  Model: {self.model} | Temperature: 0.1\n")
+        print(f"  Analyzing for: latches, reset issues, functional bugs, width mismatches")
         return {
             "success": True,
             "filename": path.name,
@@ -152,6 +153,7 @@ class BugAgent:
         """ Sends prompt to Ollama. Returns success/error dict
         """
         import time
+        elapsed = 0
         start = time.time()
         try:
             resp = requests.post(
@@ -182,66 +184,79 @@ class BugAgent:
             return {"success": False, "error":str(e), "elapsed": elapsed}
         
 
-        def parse_bugs(self, response_text: str) -> dict:
-            """
-            Extracts structured bug info from the model's text response
+    def parse_bugs(self, response_text: str) -> dict:
+        """
+        Extracts structured bug info from the model's text response.
 
-            This is simple text parsing - we look for the "BUG #N" markers
-            we told the model to use in the prompt
+        This is simple text parsing - we look for the "BUG #N" markers
+        we told the model to use in the prompt.
+        """
 
-            """
-            bugs = []
-            lines = response_text.split("\n") # split at new lines
+        bugs = []
+        lines = response_text.split("\n")
+        current_bug = None
 
-            current_bug = None
+        for line in lines:
+            line = line.strip()
 
-            for line in lines:
-                line = line.strip()
+            # Detect start of a new bug block
+            if line.startswith("BUG #") or line.startswith("Bug #"):
+                if current_bug:
+                    bugs.append(current_bug)
 
-                #Detect start of a new bug block
-                if line.startswith("BUG #") or line.startswith("Bug #"):
-                    if current_bug:
-                        bugs.append(current_bug)
-                    current_bug = {"number": len(bugs) + 1, "type": "","location":"","problem":"","impact":"","fix":""}
-                elif current_bug:
-                    if line.startswith("Type:"):
-                        current_bug["type"] = line.replace("Location:", "").strip()
-                    elif line.startswith("Location:"):
-                        current_bug["location"] = line.replace("Location:", "").strip()
-                    elif line.startswith("Problem"):
-                        current_bug["problem"] = line.replace("Problem:", "").strip()
-                    elif line.startswith("Impact:"):
-                        current_bug["impact"] = line.replace("Impact:", "").strip()
-                    elif line.startswith("Fix:"):
-                        current_bug["fix"] = line.replace("Fix:", "").strip()
- 
+                current_bug = {
+                    "number": len(bugs) + 1,
+                    "type": "",
+                    "location": "",
+                    "problem": "",
+                    "impact": "",
+                    "fix": ""
+                }
+
+            elif current_bug:
+                if line.startswith("Type:"):
+                    current_bug["type"] = line.replace("Type:", "").strip()
+
+                elif line.startswith("Location:"):
+                    current_bug["location"] = line.replace("Location:", "").strip()
+
+                elif line.startswith("Problem:"):
+                    current_bug["problem"] = line.replace("Problem:", "").strip()
+
+                elif line.startswith("Impact:"):
+                    current_bug["impact"] = line.replace("Impact:", "").strip()
+
+                elif line.startswith("Fix:"):
+                    current_bug["fix"] = line.replace("Fix:", "").strip()
+
         # Don't forget the last bug
-            if current_bug and current_bug.get("problem"):
-                 bugs.append(current_bug)
- 
+        if current_bug and current_bug.get("problem"):
+            bugs.append(current_bug)
+
         # Extract total bugs and severity from end of response
-            total_bugs = len(bugs)
-            severity   = "UNKNOWN"
- 
-            for line in lines:
-                if "TOTAL BUGS:" in line:
-                    try:
-                        total_bugs = int(line.split(":")[1].strip())
-                    except:
-                        pass
-                if "SEVERITY:" in line and ":" in line:
-                    sev_part = line.split(":")[1].strip().upper()
-                    for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
-                        if s in sev_part:
-                            severity = s
-                            break
- 
-            return {
-            "bugs":       bugs,
+        total_bugs = len(bugs)
+        severity = "UNKNOWN"
+
+        for line in lines:
+            if "TOTAL BUGS:" in line:
+                try:
+                    total_bugs = int(line.split(":")[1].strip())
+                except:
+                    pass
+
+            if "SEVERITY:" in line and ":" in line:
+                sev_part = line.split(":")[1].strip().upper()
+
+                for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
+                    if s in sev_part:
+                        severity = s
+                        break
+
+        return {
+            "bugs": bugs,
             "total_bugs": total_bugs,
-            "severity":   severity
-            }
- 
+            "severity": severity
+        }
     def _log(self, filename: str, prompt: str, response: str, parsed: dict):
         """
         Saves every analysis to a log file.
