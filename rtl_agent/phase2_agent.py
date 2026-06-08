@@ -26,12 +26,12 @@ def build_prompt(code):
 
     Do not invent signals, modules, or behaviors that are not present in the code.
 
-    Respond in the following format:
+    Respond in this exact format:
 
-    ## BUGS: List any functional bugs. If none, write: None found.
-    ## BAD PRACTICES: List coding practice violations. If none, write: None found.
-    ## TIMING: List timing or synthesis concerns. If none, write: None found.
-    ## FIXES: Provide corrected code snippets for each issue found.
+    ## BUGS
+    ## BAD PRACTICES
+    ## TIMING
+    ## FIXES
 
     Code to analyze:
     ```systemverilog
@@ -131,6 +131,6 @@ def run_pipeline(filename,output_folder,model):
 
  
 if __name__ == "__main__":
-    run_pipeline("rtl_files","reports","mistral")
+    run_pipeline("rtl_files","reports","qwen2.5:3b")
 
     

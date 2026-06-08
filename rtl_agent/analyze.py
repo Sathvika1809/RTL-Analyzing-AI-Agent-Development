@@ -17,7 +17,7 @@ def query_ollama(prompt, model):
         response.raise_for_status()
         return response.json()["response"]
     except Exception as e:
-         return f"Error: {e}"
+        return f"Error: {e}"
 
 
 def analyze_rtl_file(filepath,model):

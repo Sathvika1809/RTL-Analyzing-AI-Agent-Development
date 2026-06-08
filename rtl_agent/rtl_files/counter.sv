@@ -1,38 +1,27 @@
-// counter.sv
-// Parameterized up-counter with load and enable
-// Contains intentional bugs for agent testing
 
 module counter #(
     parameter WIDTH = 8
 )(
-    input  logic             clk,
-    input  logic             rst_n,
-    input  logic             en,
-    input  logic             load,
-    input  logic [WIDTH-1:0] load_val,
-    output logic [WIDTH-1:0] count,
-    output logic             overflow
+    input  logic              clk,
+    input  logic              rst_n,
+    input  logic              enable,
+    output logic [WIDTH-1:0]  count,
+    output logic              carry_out
 );
 
-    always_ff @(posedge clk) begin
+    always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            count <= '0;
-            // BUG 1: overflow not reset → undefined initial state
-        end else if (en) begin
-            if (load) begin
-                count <= load_val;
-            end else begin
-                count <= count + 1;
-            end
+            count = 8'b0;       
+        end else if (enable) begin
+            count = count + 1;   
         end
-
-        // BUG 2: overflow is inside always_ff but has no else
-        // When count != MAX, overflow is never cleared → LATCH
-        if (count == {WIDTH{1'b1}})
-            overflow <= 1'b1;
     end
 
-    // BUG 3: no assertions for overflow behavior
-    // BUG 4: load and en can conflict — no priority documentation
+    
+    always_comb begin
+        if (count == {WIDTH{1'b1}})
+            carry_out = 1'b1;
+      
+    end
 
 endmodule

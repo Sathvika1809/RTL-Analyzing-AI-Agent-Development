@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime
 
 OLLAMA_URL = "http://localhost:11434"
-MODEL_NAME = "codellama"
+MODEL_NAME = "qwen2.5:3b"
 
 # --------------
 # The Bug Focused Prompt
@@ -42,18 +42,29 @@ Check specifically for:
     
 2. RESET PROBLEMS:
     - Flip-flops(always_ff blocks) where signals are not reset
-    - Inconsistent reset ppolarity (mixing active-high and active-low)
+    - Inconsistent reset polarity (mixing active-high and active-low)
     - Signals only reset in some conditions but not others
+
 3. FUNCTIONAL BUGS:
     - Counter overflow not handled
     - Multiple drivers on the same signal
     - Blocking assignments (=) used inside always_ff instead of non-blocking (<=)
     - Race conditions between concurrent always blocks
     
-4. WIDTH MISMATCHES
+4. WIDTH MISMATCHES:
     - Hardcoded bit widths that don't match parameter sizes
     - Truncation or sign extension issues
-    
+
+IMPORTANT CHECKLIST - Do this before responding:
+Step 1: List ALL output signals and variables in every always_comb block.
+Step 2: List ALL branches in every case statement and if-else block.
+Step 3: For each signal from Step 1, verify it is assigned in EVERY branch from Step 2.
+Step 4: If ANY signal is missing from ANY branch - that is a LATCH INFERENCE bug. Report it.
+Step 5: Check if there is a default case. If missing - report it as LATCH INFERENCE.
+
+Do this analysis even if the code looks clean and well written.
+Keep each response field to 2-3 sentences maximum.
+
 FILE: {filename}
 
 CODE:
@@ -63,19 +74,15 @@ For EACH bug you find, respond in this EXACT format:
 
 BUG #1
 Type: [LATCH / RESET / FUNCTIONAL / WIDTH]
-Location: Line -X or signal name
-Problem: [What is wrong]
-Impact: [What goes wrong at simulation or silicon]
-Fix: [Exact code change to fix it]
-
-BUG #2
-...
+Location: [signal name or always_comb block]
+Problem: [What is wrong - 2 sentences max]
+Impact: [What goes wrong at simulation or silicon - 1 sentence]
+Fix: [Exact code change]
 
 If no bugs are found, write: NO BUGS DETECTED
 
-End with:
 TOTAL BUGS: [number]
-SEVERITY: [CRITICAL / HIGH / MEDIUM / LOW] - one word for overall file
+SEVERITY: [CRITICAL / HIGH / MEDIUM / LOW]
 """
 class BugAgent:
     """ 
@@ -165,10 +172,10 @@ class BugAgent:
                     "options": {
                         "temperature": 0.1,
 
-                        "num_predict":1500
+                        "num_predict":800
                     }
                 },
-                timeout=150
+                timeout=250
             )
             elapsed = time.time()-start
 

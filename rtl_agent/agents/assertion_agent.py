@@ -94,6 +94,7 @@ class AssertionAgent:
             "coverage": "MEDIUM",
             "raw_response": "..."
         }
+        
         """
         path = Path(filepath)
 
