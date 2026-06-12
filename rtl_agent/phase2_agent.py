@@ -18,20 +18,53 @@ import time
 import requests
 import glob
 def build_prompt(code):
-    prompt = f"""You are an expert RTL and SystemVerilog design engineer
+    prompt = f"""You are a senior RTL Verification Engineer.
     Analyze ONLY the SystemVerilog code provided below.
 
-    If no issues are found, explicitly state:
-    "No RTL bugs found."
-
-    Do not invent signals, modules, or behaviors that are not present in the code.
-
-    Respond in this exact format:
+    Rules:
+    1. Report an issue ONLY if it can be directly observed in the code.
+    2. Do NOT suggest generic HDL best practices.
+    3. Do NOT recommend timing constraints, clock constraints,
+    delays, or synthesis directives unless they are directly
+    related to a bug in the code.
+    4. Do NOT speculate about missing functionality.
+    5. If a parameter, signal, or register is used anywhere in
+    the code, do NOT claim it is unused.
+    6. For every issue:
+    - Quote the exact code snippet.
+    - Explain why it is a problem.
+    - Explain the RTL consequence.
+    7.Do not place style suggestions under BUGS.
+    BUGS = functionality, synthesis, simulation, reset,
+    latch, CDC, overflow, race-condition, width mismatch.
+    BAD PRACTICES = maintainability concerns only.
+   
+   Output format:
 
     ## BUGS
     ## BAD PRACTICES
     ## TIMING
     ## FIXES
+    For every bug provide:
+        LINE:
+        CODE:
+        ISSUE:
+        IMPACT:
+        FIX:
+
+    If no issues are found, return:
+
+    ## BUGS
+    No RTL bugs found.
+
+    ## BAD PRACTICES
+    None.
+
+    ## TIMING
+    No timing issues observable from RTL.
+
+    ## FIXES
+    None.
 
     Code to analyze:
     ```systemverilog
@@ -53,7 +86,11 @@ def query_ollama(prompt,model):
             json={
                 "model": model,
                 "prompt": prompt,
-                "stream": False
+                "stream": False,
+                "options": {
+                "temperature": 0.1,
+                "top_p": 0.8
+                }
             },
             timeout = 300
         )

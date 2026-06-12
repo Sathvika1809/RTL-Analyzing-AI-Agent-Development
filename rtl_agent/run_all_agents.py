@@ -21,7 +21,7 @@ from datetime import datetime
 from agents.bug_agent import BugAgent
 from agents.timing_agent import TimingAgent
 from agents.assertion_agent import AssertionAgent
-from agents.optimizer_agent import OptimizerAgent
+from agents.optimize_agent import OptimizerAgent
 
 
 def save_combined_report(filename, bug_result, timing_result,

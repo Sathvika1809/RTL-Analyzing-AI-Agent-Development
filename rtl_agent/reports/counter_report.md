@@ -3,53 +3,18 @@
 
 
 ## Model: qwen2.5:3b
-Elapsed time: 51.08 seconds
+Elapsed time: 22.95 seconds
 
 ----
 
-```systemverilog
-module counter #(
-    parameter WIDTH = 8
-)(
-    input  logic             clk,
-    input  logic             rst_n,
-    input  logic             en,
-    input  logic             load,
-    input  logic [WIDTH-1:0] load_val,
-    output logic [WIDTH-1:0] count,
-    output logic             overflow
-);
+## BUGS
+No RTL bugs found.
 
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            count <= '0;
-           
-        end else if (en) begin
-            if (load) begin
-                count <= load_val;
-            end else begin
-                count <= count + 1;
-            end
-        end
+## BAD PRACTICES
+None.
 
-        
-        if (count == {WIDTH{1'b1}})
-            overflow <= 1'b1;
-    end
+## TIMING
+No timing issues observable from RTL.
 
-  
-
-endmodule
-```
-
-## BUGS: 
-- None found.
-
-## BAD PRACTICES:
-- **None found**.
-
-## TIMING:  
-- None found.
-
-## FIXES:  
-- No fixes are needed as the code does not have any issues.
+## FIXES
+None.
