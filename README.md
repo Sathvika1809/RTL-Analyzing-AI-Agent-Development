@@ -281,7 +281,8 @@ Inside `always @(posedge clk)`, **blocking assignment `=`** is used instead of *
 During **Phase 1 baseline evaluation** ([docs/phase1_evaluation.md](file:///d:/PSProject/docs/phase1_evaluation.md)), base models were queried directly without system roles or structured environments:
 *   **mistral:** Found *no bugs*. Claimed code was functional and proposed adding unnecessary timing constraints and clock enables.
 *   **codellama:** Found *no bugs*. Suggested output registers should be wires (invalid syntax for behavioral blocks).
-*   **tinyllama:** Found *no bugs*. Reported it passed all checks.
+*   **qwen2.5:3b:** Found *no bugs*. Suggested changing non-existent blocks and signals (hallucinated `always_comb` block and signals like `rst_n`).
+
 
 ### The Agent Solution
 With the **RTL analyzing agents** running specialized verification prompts:

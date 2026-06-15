@@ -3,7 +3,7 @@
 
 
 ## Model: qwen2.5:3b
-Elapsed time: 26.46 seconds
+Elapsed time: 113.97 seconds
 
 ----
 
