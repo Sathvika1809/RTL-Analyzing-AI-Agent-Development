@@ -115,6 +115,9 @@ D:\PSProject
 ├── docs/
 │   ├── assignment_requirements.md        # Hardware specification prompts & exercises
 │   └── phase1_evaluation.md              # Baseline testing of Ollama models
+|   └── phase2_evaluation.md
+|   └── phase3_evaluation.md
+|   
 ├── logs/                                 # Runtime JSONL execution logs for agents
 ├── reports/                              # Generated Markdown verification reports
 │   └── reference/                        # Reference reports for Phase 3 models
@@ -244,7 +247,7 @@ Configure backend defaults in [config/settings.json](file:///d:/PSProject/config
 {
   "ollama_url": "http://localhost:11434",
   "default_model": "qwen2.5:3b",
-  "timeout": 250,
+  "timeout": 600,
   "temperature": 0.1
 }
 ```
