@@ -1,2 +1,0 @@
-{"timestamp": "2026-06-05T09:13:40.943216", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 0, "severity": "LOW", "response_length": 45}
-{"timestamp": "2026-06-05T09:17:41.615716", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 1397}

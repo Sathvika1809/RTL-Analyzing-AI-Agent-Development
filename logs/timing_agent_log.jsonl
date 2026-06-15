@@ -1,0 +1,6 @@
+{"timestamp": "2026-06-04T17:49:54.367850", "agent": "timing_agent", "model": "mistral", "filename": "alu.sv", "issues_found": 1, "severity": "MEDIUM", "response_length": 1098}
+{"timestamp": "2026-06-14T21:07:00.344949", "agent": "timing_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "issues_found": 1, "severity": "HIGH", "response_length": 820}
+{"timestamp": "2026-06-14T21:18:27.296177", "agent": "timing_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "issues_found": 1, "severity": "HIGH", "response_length": 543}
+{"timestamp": "2026-06-14T21:31:44.093280", "agent": "timing_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "issues_found": 1, "severity": "HIGH", "response_length": 469}
+{"timestamp": "2026-06-14T22:23:54.756804", "agent": "timing_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "issues_found": 1, "severity": "HIGH", "response_length": 544}
+{"timestamp": "2026-06-15T15:31:01.652784", "agent": "timing_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "issues_found": 1, "severity": "HIGH", "response_length": 531}

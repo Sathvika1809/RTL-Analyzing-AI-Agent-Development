@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTL Analysis & Verification Agent</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Main Style Sheet -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Cosmic Glowing Background Blobs -->
+        <div class="blob blob-purple"></div>
+        <div class="blob blob-cyan"></div>
+        
+        <!-- Header -->
+        <header class="glass-panel main-header animate-fade-in">
+            <div class="logo-area">
+                <i class="fa-solid fa-microchip logo-icon"></i>
+                <div class="logo-text">
+                    <h1>RTL-Agent</h1>
+                    <span>Next-Gen SystemVerilog Verification</span>
+                </div>
+                <div class="status-badge offline" id="ollama-status">
+                    <span class="status-dot"></span> Ollama: Offline
+                </div>
+            </div>
+            <div class="controls-area">
+                <div class="select-wrapper">
+                    <label for="model-select"><i class="fa-solid fa-brain"></i> Model:</label>
+                    <select id="model-select" class="glass-input">
+                        <option value="">Scanning models...</option>
+                    </select>
+                </div>
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="chk-parallel" class="glass-checkbox" />
+                    <label for="chk-parallel" title="Run all agents in parallel (can cause timeouts on CPU)">Parallel</label>
+                </div>
+                <button id="btn-refresh" class="glass-button secondary-btn" title="Refresh local files & models">
+                    <i class="fa-solid fa-sync"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="workspace-grid">
+            <!-- Sidebar: File Navigator -->
+            <aside class="glass-panel sidebar animate-slide-in-left">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-folder-open"></i> RTL Modules</h2>
+                    <span class="file-count" id="lbl-file-count">0 files</span>
+                </div>
+                <div class="sidebar-actions">
+                    <button id="btn-create-file" class="glass-button secondary-btn compact-btn" title="Create New Module">
+                        <i class="fa-solid fa-plus"></i> New
+                    </button>
+                    <button id="btn-delete-file" class="glass-button secondary-btn compact-btn delete-btn" title="Delete Active Module" disabled>
+                        <i class="fa-solid fa-trash-can"></i> Delete
+                    </button>
+                </div>
+                <div class="file-list" id="files-container">
+                    <div class="loading-state">
+                        <i class="fa-solid fa-circle-notch fa-spin"></i> Loading SV files...
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main Content Area -->
+            <section class="main-content">
+                <!-- Warning / Alert Banner -->
+                <div class="error-banner" id="error-banner" style="display: none;">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span id="error-banner-text">Warning: Some agents encountered execution errors.</span>
+                    <button class="error-close-btn" id="btn-close-error">&times;</button>
+                </div>
+                <!-- Top Half: Code Editor -->
+                <div class="glass-panel editor-panel animate-fade-in">
+                    <div class="panel-header">
+                        <div class="active-file-info">
+                            <i class="fa-regular fa-file-code active-file-icon"></i>
+                            <h2 id="lbl-active-file">No file selected</h2>
+                            <span class="save-status" id="lbl-save-status">Saved</span>
+                        </div>
+                        <div class="editor-actions">
+                            <button id="btn-save" class="glass-button secondary-btn" disabled>
+                                <i class="fa-regular fa-floppy-disk"></i> Save
+                            </button>
+                            <button id="btn-analyze" class="glass-button primary-btn pulse-glow" disabled>
+                                <i class="fa-solid fa-bolt"></i> Run Multi-Agent Analysis
+                            </button>
+                        </div>
+                    </div>
+                    <div class="editor-container">
+                        <textarea id="code-editor" class="code-textarea" spellcheck="false" placeholder="// Select a file from the sidebar to view/edit RTL code..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Bottom Half: Analysis Dashboard -->
+                <div class="glass-panel dashboard-panel animate-slide-in-up">
+                    <div class="dashboard-tabs">
+                        <button class="tab-link active" data-tab="tab-bugs">
+                            <i class="fa-solid fa-bug"></i> Bugs <span class="tab-badge badge-red" id="badge-bugs">0</span>
+                        </button>
+                        <button class="tab-link" data-tab="tab-timing">
+                            <i class="fa-solid fa-stopwatch"></i> Timing & CDC <span class="tab-badge badge-yellow" id="badge-timing">0</span>
+                        </button>
+                        <button class="tab-link" data-tab="tab-assertions">
+                            <i class="fa-solid fa-shield-halved"></i> Generated SVA <span class="tab-badge badge-blue" id="badge-assertions">0</span>
+                        </button>
+                        <button class="tab-link" data-tab="tab-optimizations">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Optimizations <span class="tab-badge badge-green" id="badge-opts">0</span>
+                        </button>
+                        <button class="tab-link" data-tab="tab-custom">
+                            <i class="fa-solid fa-comments"></i> Custom Chat
+                        </button>
+                    </div>
+                    
+                    <div class="tab-content-container">
+                        <!-- Bugs Tab -->
+                        <div id="tab-bugs" class="tab-panel active">
+                            <div class="panel-action-bar">
+                                <div class="metric-group">
+                                    <span class="metric-label">Severity:</span>
+                                    <span class="metric-val text-red" id="val-bug-severity">-</span>
+                                </div>
+                                <button id="btn-auto-fix" class="glass-button green-btn" disabled>
+                                    <i class="fa-solid fa-magic"></i> Auto-Repair RTL
+                                </button>
+                            </div>
+                            <div class="findings-grid" id="bugs-findings">
+                                <div class="empty-state">
+                                    <i class="fa-solid fa-circle-check"></i>
+                                    <p>No analysis run yet. Select a file and click "Run Multi-Agent Analysis".</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Timing Tab -->
+                        <div id="tab-timing" class="tab-panel">
+                            <div class="panel-action-bar">
+                                <div class="metric-group">
+                                    <span class="metric-label">Risk Level:</span>
+                                    <span class="metric-val text-yellow" id="val-timing-risk">-</span>
+                                </div>
+                            </div>
+                            <div class="findings-grid" id="timing-findings">
+                                <div class="empty-state">
+                                    <i class="fa-solid fa-clock"></i>
+                                    <p>Select a file and trigger analysis to check CDC, latches, and clock properties.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Assertions Tab -->
+                        <div id="tab-assertions" class="tab-panel">
+                            <div class="panel-action-bar">
+                                <div class="metric-group">
+                                    <span class="metric-label">Coverage Strength:</span>
+                                    <span class="metric-val text-blue" id="val-assertion-coverage">-</span>
+                                </div>
+                                <button id="btn-copy-assertions" class="glass-button secondary-btn" disabled>
+                                    <i class="fa-regular fa-copy"></i> Copy All Assertions
+                                </button>
+                            </div>
+                            <div class="assertions-list" id="assertions-findings">
+                                <div class="empty-state">
+                                    <i class="fa-solid fa-shield"></i>
+                                    <p>Assertions generated by LLM based on RTL logic will appear here.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Optimizations Tab -->
+                        <div id="tab-optimizations" class="tab-panel">
+                            <div class="panel-action-bar">
+                                <div class="metric-group">
+                                    <span class="metric-label">Quality Score:</span>
+                                    <span class="metric-val text-green" id="val-opts-quality">-</span>
+                                </div>
+                            </div>
+                            <div class="findings-grid" id="opts-findings">
+                                <div class="empty-state">
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                    <p>Style, naming conventions, and parameter recommendations will be displayed here.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Custom Chat Tab -->
+                        <div id="tab-custom" class="tab-panel">
+                            <div class="panel-action-bar">
+                                <div class="metric-group">
+                                    <span class="metric-label">Ask RTL-Agent:</span>
+                                    <span class="metric-val text-blue">Custom Queries</span>
+                                </div>
+                            </div>
+                            <div class="chat-container">
+                                <div class="chat-messages" id="chat-messages">
+                                    <div class="chat-bubble agent animate-zoom-in">
+                                        <p>Hello! I am RTL-Agent. Ask me any question or give me an instruction regarding the selected module. For example: "Explain the reset logic" or "Translate this module to a synchronous counter."</p>
+                                    </div>
+                                </div>
+                                <div class="chat-input-area">
+                                    <input type="text" id="chat-input" class="glass-input" placeholder="Type a prompt for this RTL file (e.g. 'Identify the FSM states')..." disabled />
+                                    <button id="btn-send-chat" class="glass-button primary-btn" disabled>
+                                        <i class="fa-solid fa-paper-plane"></i> Send
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal: Auto-Fix Diff Viewer -->
+    <div id="modal-fix" class="modal-overlay">
+        <div class="modal-content glass-panel animate-zoom-in">
+            <div class="panel-header">
+                <h2><i class="fa-solid fa-code-compare"></i> Auto-Fix Diff Review</h2>
+                <button class="modal-close" id="btn-close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="explanation-box" id="lbl-fix-explanation">Running repair agent...</p>
+                <div class="diff-view-container">
+                    <div class="diff-pane">
+                        <h3>Original RTL Code</h3>
+                        <pre class="code-pre" id="diff-original-code"></pre>
+                    </div>
+                    <div class="diff-pane">
+                        <h3>Fixed Synthesizable RTL Code</h3>
+                        <pre class="code-pre" id="diff-fixed-code"></pre>
+                    </div>
+                </div>
+            </div>
+            <div class="panel-footer">
+                <button id="btn-cancel-fix" class="glass-button secondary-btn">Discard Changes</button>
+                <button id="btn-apply-fix" class="glass-button green-btn pulse-glow">Apply & Save Fixes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Indicator Overlay -->
+    <div id="overlay-progress" class="overlay-modal-full">
+        <div class="progress-card glass-panel">
+            <i class="fa-solid fa-gears fa-spin progress-icon"></i>
+            <h2 id="lbl-progress-title">Analyzing RTL Code</h2>
+            <p id="lbl-progress-subtitle">Spawning specialized AI agents in parallel...</p>
+            
+            <!-- Visual Agent Pipeline Flow -->
+            <div class="pipeline-flow" id="pipeline-flow" style="display: none;">
+                <div class="pipeline-node" id="node-bug">
+                    <div class="node-icon"><i class="fa-solid fa-bug"></i></div>
+                    <div class="node-label">BugAgent</div>
+                    <div class="node-status" id="status-bug">Pending</div>
+                </div>
+                <div class="pipeline-connector">➔</div>
+                <div class="pipeline-node" id="node-timing">
+                    <div class="node-icon"><i class="fa-solid fa-stopwatch"></i></div>
+                    <div class="node-label">TimingAgent</div>
+                    <div class="node-status" id="status-timing">Pending</div>
+                </div>
+                <div class="pipeline-connector">➔</div>
+                <div class="pipeline-node" id="node-assertion">
+                    <div class="node-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                    <div class="node-label">AssertionAgent</div>
+                    <div class="node-status" id="status-assertion">Pending</div>
+                </div>
+                <div class="pipeline-connector">➔</div>
+                <div class="pipeline-node" id="node-optimizer">
+                    <div class="node-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+                    <div class="node-label">OptimizerAgent</div>
+                    <div class="node-status" id="status-optimizer">Pending</div>
+                </div>
+            </div>
+
+            <div class="progress-bar">
+                <div class="progress-bar-fill animate-progress" id="progress-fill"></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

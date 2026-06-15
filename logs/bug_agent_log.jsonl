@@ -1,0 +1,7 @@
+{"timestamp": "2026-06-05T09:13:40.943216", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 0, "severity": "LOW", "response_length": 45}
+{"timestamp": "2026-06-05T09:17:41.615716", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 1397}
+{"timestamp": "2026-06-14T19:54:39.934033", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 1, "severity": "CRITICAL", "response_length": 571}
+{"timestamp": "2026-06-14T21:04:39.217600", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 1, "severity": "CRITICAL", "response_length": 539}
+{"timestamp": "2026-06-14T21:17:28.216839", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 1, "severity": "MEDIUM", "response_length": 536}
+{"timestamp": "2026-06-14T21:29:22.984241", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 1, "severity": "MEDIUM", "response_length": 498}
+{"timestamp": "2026-06-15T15:29:54.747032", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 2, "severity": "MEDIUM", "response_length": 910}

@@ -1,0 +1,6 @@
+{
+  "ollama_url": "http://localhost:11434",
+  "default_model": "qwen2.5:3b",
+  "timeout": 250,
+  "temperature": 0.1
+}
