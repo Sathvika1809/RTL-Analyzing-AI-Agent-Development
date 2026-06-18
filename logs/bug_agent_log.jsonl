@@ -12,3 +12,5 @@
 {"timestamp": "2026-06-18T14:41:42.188478", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 1, "severity": "HIGH", "response_length": 623}
 {"timestamp": "2026-06-18T14:58:15.292892", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 1, "severity": "HIGH", "response_length": 816}
 {"timestamp": "2026-06-18T15:03:23.227158", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "dma_fifo_deadlock.sv", "bugs_found": 1, "severity": "MEDIUM", "response_length": 647}
+{"timestamp": "2026-06-18T15:14:33.286557", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 1, "severity": "HIGH", "response_length": 579}
+{"timestamp": "2026-06-18T15:19:45.933880", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 1, "severity": "MEDIUM", "response_length": 592}
