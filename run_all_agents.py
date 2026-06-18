@@ -23,6 +23,8 @@ from src.agents.bug_agent import BugAgent
 from src.agents.timing_agent import TimingAgent
 from src.agents.assertion_agent import AssertionAgent
 from src.agents.optimize_agent import OptimizerAgent
+from src.core.config import DEFAULT_MODEL
+
 
 
 def save_combined_report(filename, bug_result, timing_result,
@@ -91,10 +93,11 @@ def save_combined_report(filename, bug_result, timing_result,
 
 def run_all_agents(rtl_folder="rtl_files",
                    output_folder="reports",
-                   model="mistral"):
+                   model="qwen2.5:3b"):
     """
     Main function. Runs all 4 agents on every .sv file.
     """
+    model = model if model else DEFAULT_MODEL
     start_total = time.time()
 
     # Find all RTL files
@@ -137,10 +140,26 @@ def run_all_agents(rtl_folder="rtl_files",
             assertion_future = executor.submit(assertion_agent.analyze, filepath)
             optimizer_future = executor.submit(optimizer_agent.analyze, filepath)
             
-            bug_result = bug_future.result()
-            timing_result = timing_future.result()
-            assertion_result = assertion_future.result()
-            optimizer_result = optimizer_future.result()
+            try:
+                bug_result = bug_future.result()
+            except Exception as e:
+                bug_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                
+            try:
+                timing_result = timing_future.result()
+            except Exception as e:
+                timing_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                
+            try:
+                assertion_result = assertion_future.result()
+            except Exception as e:
+                assertion_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                
+            try:
+                optimizer_result = optimizer_future.result()
+            except Exception as e:
+                optimizer_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+
 
         # Save combined report
         report_path = save_combined_report(
@@ -157,12 +176,12 @@ def run_all_agents(rtl_folder="rtl_files",
         # Track summary
         summary.append({
             "filename": filename,
-            "bugs": bug_result.get("total_bugs", "N/A"),
-            "severity": bug_result.get("severity", "N/A"),
-            "timing_issues": timing_result.get("total_issues", "N/A"),
-            "risk": timing_result.get("risk", "N/A"),
-            "assertions": assertion_result.get("total_assertions", "N/A"),
-            "optimizations": optimizer_result.get("total_optimizations", "N/A"),
+            "bugs": bug_result.get("total_bugs", "N/A") if bug_result.get("success") else "ERR",
+            "severity": bug_result.get("severity", "N/A") if bug_result.get("success") else "ERR",
+            "timing_issues": timing_result.get("total_issues", "N/A") if timing_result.get("success") else "ERR",
+            "risk": timing_result.get("risk", "N/A") if timing_result.get("success") else "ERR",
+            "assertions": assertion_result.get("total_assertions", "N/A") if assertion_result.get("success") else "ERR",
+            "optimizations": optimizer_result.get("total_optimizations", "N/A") if optimizer_result.get("success") else "ERR",
             "elapsed": round(file_elapsed, 1)
         })
 
@@ -190,5 +209,5 @@ if __name__ == "__main__":
     run_all_agents(
         rtl_folder="rtl_files",
         output_folder="reports",
-        model="mistral"
+        model="qwen2.5:3b"
     )

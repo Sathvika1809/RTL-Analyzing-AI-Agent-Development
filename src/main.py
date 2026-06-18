@@ -27,9 +27,10 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
         print(f"Error: No SystemVerilog/Verilog (*.sv, *.v) files found at '{file_path}'")
         return
 
-    print("=" * 60)
-    print(f"RTL AI AGENT CLI ANALYSIS - MODEL: {model} (Mode: {'Parallel' if parallel else 'Sequential'})")
-    print("=" * 60)
+    print("=" * 80)
+    print(f"🌟 RTL MULTI-AGENT COMPILER & VERIFIER - MODEL: {model}")
+    print(f"⚙️  Execution Scheme: {'Parallel Threads' if parallel else 'Sequential Pipeline'}")
+    print("=" * 80)
 
     # Initialize agents
     bug_agent = BugAgent(model=model)
@@ -47,7 +48,7 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
     for path in files:
         filename = os.path.basename(path)
         print(f"\nAnalyzing: {filename}...")
-        print("-" * 45)
+        print("-" * 50)
         
         file_start = time.time()
 
@@ -59,10 +60,26 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
                 assertion_future = executor.submit(assertion_agent.analyze, path)
                 optimizer_future = executor.submit(optimizer_agent.analyze, path)
 
-                bug_res = bug_future.result()
-                timing_res = timing_future.result()
-                assertion_res = assertion_future.result()
-                optimizer_res = optimizer_future.result()
+                try:
+                    bug_res = bug_future.result()
+                except Exception as e:
+                    bug_res = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                    
+                try:
+                    timing_res = timing_future.result()
+                except Exception as e:
+                    timing_res = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                    
+                try:
+                    assertion_res = assertion_future.result()
+                except Exception as e:
+                    assertion_res = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                    
+                try:
+                    optimizer_res = optimizer_future.result()
+                except Exception as e:
+                    optimizer_res = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+
         else:
             # Run agents sequentially
             bug_res = bug_agent.analyze(path)
@@ -119,16 +136,16 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
 
     # Print summary dashboard to console
     total_elapsed = time.time() - start_total
-    print(f"\n{'='*75}")
-    print(f"ANALYSIS RUN METRICS")
-    print(f"{'='*75}")
-    print(f"{'File':<18} {'Bugs':<6} {'Severity':<10} {'Timing':<8} {'Risk':<8} {'SVA':<6} {'Opts':<6} {'Time'}")
-    print(f"{'-'*75}")
+    print(f"\n{'='*82}")
+    print(f"📊 SUMMARY REPORT METRICS DASHBOARD")
+    print(f"{'='*82}")
+    print(f"{'RTL Design File':<22} {'Bugs':<6} {'Severity':<10} {'Timing':<8} {'Risk':<8} {'SVA':<6} {'Opts':<6} {'Time'}")
+    print(f"{'-'*82}")
     for s in summary:
-        print(f"{s['filename']:<18} {str(s['bugs']):<6} {str(s['severity']):<10} "
+        print(f"{s['filename']:<22} {str(s['bugs']):<6} {str(s['severity']):<10} "
               f"{str(s['timing']):<8} {str(s['risk']):<8} "
               f"{str(s['sva']):<6} {str(s['opts']):<6} {s['time']}s")
-    print(f"{'-'*75}")
+    print(f"{'-'*82}")
     print(f"Total Files: {len(files)} | Total Time: {total_elapsed:.1f}s")
     print(f"All reports saved to: {reports_dir}/\n")
 

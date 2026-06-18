@@ -3,10 +3,16 @@ from datetime import datetime
 from pathlib import Path
 from src.core.base_agent import BaseAgent
 
-OPTIMIZER_ANALYSIS_PROMPT = """You are a senior RTL design engineer specializing in code quality, readability, and optimization.
+OPTIMIZER_ANALYSIS_PROMPT = """You are a senior RTL verification engineer specializing in code quality, readability, and optimization.
 
 Analyze the following SystemVerilog module for code quality issues ONLY.
 Do NOT report bugs or timing issues - only optimization and style concerns.
+
+CRITICAL RULES FOR GENERALIZED DESIGN OPTIMIZATION:
+1. DECLARED ENTITIES ONLY: First, inspect the RTL code and identify the exact names of all declared signals, registers, ports, and parameters. Any optimization, refactoring, or renaming suggestions you report MUST strictly refer only to these declared signals and parameters.
+2. DO NOT INVENT LOGIC: Do not suggest optimizing code, clocks, resets, parameters, or structures that are not explicitly present in the provided file.
+3. STYLE AND PPA FOCUS: Suggestions should focus on improving readability, parameterizing hardcoded values, or simplifying redundant logic paths.
+4. If no optimizations are suggested, you MUST return: {{"declared_signals_and_parameters": [], "optimizations": [], "total_optimizations": 0, "quality_score": "HIGH"}}.
 
 Check specifically for:
 1. HARDCODED VALUES: Numbers that should be parameters
@@ -24,21 +30,25 @@ You MUST respond in a VALID JSON format matching the following JSON schema. Do n
 
 JSON Schema:
 {{
+  "declared_signals_and_parameters": [
+    "exact names of all signals, registers, ports, and parameters in the module"
+  ],
   "optimizations": [
     {{
-      "type": "HARDCODED", "NAMING", "REDUNDANT", "COMMENT", or "STYLE",
-      "location": "string detailing the signal name, line number, or block",
+      "type": "HARDCODED" | "NAMING" | "REDUNDANT" | "COMMENT" | "STYLE",
+      "location": "exact line number or block name",
       "issue": "Clear description of what can be improved (2 sentences max)",
       "benefit": "Why this improvement matters (1 sentence max)",
       "suggestion": "Exact improved code or description of change"
     }}
   ],
   "total_optimizations": 0,
-  "quality_score": "HIGH", "MEDIUM", or "LOW"
+  "quality_score": "HIGH" | "MEDIUM" | "LOW"
 }}
 
 If no optimizations are suggested, return:
 {{
+  "declared_signals_and_parameters": [],
   "optimizations": [],
   "total_optimizations": 0,
   "quality_score": "HIGH"
@@ -65,16 +75,22 @@ class OptimizerAgent(BaseAgent):
             code=code
         )
 
-        result = self.call_ollama(prompt, json_mode=True)
+        result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
         if not result["success"]:
             return {"success": False, "error": result["error"]}
 
         parsed_json = self.parse_json_response(result["response"])
         
         # Ensure fallback for fields
-        optimizations = parsed_json.get("optimizations", [])
-        total_optimizations = parsed_json.get("total_optimizations", len(optimizations))
-        quality_score = parsed_json.get("quality_score", "HIGH" if not optimizations else "MEDIUM")
+        if isinstance(parsed_json, list):
+            optimizations = parsed_json
+            total_optimizations = len(optimizations)
+            quality_score = "MEDIUM" if optimizations else "HIGH"
+        else:
+            optimizations = parsed_json.get("optimizations", []) if isinstance(parsed_json, dict) else []
+            total_optimizations = parsed_json.get("total_optimizations", len(optimizations)) if isinstance(parsed_json, dict) else len(optimizations)
+            quality_score = parsed_json.get("quality_score", "HIGH" if not optimizations else "MEDIUM") if isinstance(parsed_json, dict) else ("HIGH" if not optimizations else "MEDIUM")
+
 
         # Format backward-compatible markdown raw_response
         raw_response = self._format_markdown_response(optimizations, total_optimizations, quality_score)

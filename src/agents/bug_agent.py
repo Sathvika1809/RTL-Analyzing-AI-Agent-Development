@@ -6,6 +6,15 @@ from src.core.base_agent import BaseAgent
 BUG_ANALYSIS_PROMPT = """You are a senior RTL verification engineer specializing in finding hardware bugs in SystemVerilog code.
 
 Analyze the following SystemVerilog module for BUGS ONLY.
+
+CRITICAL RULES FOR GENERALIZED ANALYSIS:
+1. IDENTIFY DECLARED IDENTIFIERS: First, inspect the RTL code and list all ports, signals, registers, and parameters. You are strictly forbidden from referencing, assuming, or using any signal or parameter names that are not explicitly declared in this module.
+2. DO NOT SPECULATE: Only report bugs that can be mathematically or logically proven from the provided RTL code.
+3. CONTEXT INTEGRITY: Do not assume the existence of external logic, clock enables, or interfaces unless they are explicitly declared in the inputs/outputs of the module.
+4. NO RESET CONFUSION: Analyze the exact active reset signal and active polarity (e.g. check if it is active-high 'rst' or active-low 'rst_n' or asynchronous/synchronous) and only report reset bugs matching the actual reset signal name.
+5. NO SYNTHESIS SPECULATION: Do not report timing or logic optimization concerns as functional bugs.
+6. If no bugs are found, you MUST return the empty JSON block: {{"declared_ports_and_signals": [], "declared_parameters": [], "bugs": [], "total_bugs": 0, "severity": "LOW"}}.
+
 Check specifically for:
 1. LATCH INFERENCE:
     - Signals assigned inside always_comb or always @(*) without a complete if-else
@@ -36,21 +45,29 @@ You MUST respond in a VALID JSON format matching the following JSON schema. Do n
 
 JSON Schema:
 {{
+  "declared_ports_and_signals": [
+    "list of all exact port and signal names declared in the RTL module"
+  ],
+  "declared_parameters": [
+    "list of all parameter names declared in the RTL module (leave empty if none)"
+  ],
   "bugs": [
     {{
-      "type": "LATCH", "RESET", "FUNCTIONAL", or "WIDTH",
-      "location": "string detailing the signal name, block, or line numbers",
+      "type": "LATCH" | "RESET" | "FUNCTIONAL" | "WIDTH",
+      "location": "exact signal/register/port name and line number where the issue occurs",
       "problem": "Clear explanation of what is wrong (2 sentences max)",
       "impact": "RTL consequence in simulation or silicon (1 sentence max)",
       "fix": "Exact code change required to resolve the issue"
     }}
   ],
   "total_bugs": 0,
-  "severity": "CRITICAL", "HIGH", "MEDIUM", or "LOW"
+  "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
 }}
 
 If no bugs are found, return:
 {{
+  "declared_ports_and_signals": [],
+  "declared_parameters": [],
   "bugs": [],
   "total_bugs": 0,
   "severity": "LOW"
@@ -77,16 +94,22 @@ class BugAgent(BaseAgent):
             code=code
         )
 
-        result = self.call_ollama(prompt, json_mode=True)
+        result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
         if not result["success"]:
             return {"success": False, "error": result["error"]}
 
         parsed_json = self.parse_json_response(result["response"])
         
         # Ensure fallback for fields
-        bugs = parsed_json.get("bugs", [])
-        total_bugs = parsed_json.get("total_bugs", len(bugs))
-        severity = parsed_json.get("severity", "LOW" if not bugs else "MEDIUM")
+        if isinstance(parsed_json, list):
+            bugs = parsed_json
+            total_bugs = len(bugs)
+            severity = "MEDIUM" if bugs else "LOW"
+        else:
+            bugs = parsed_json.get("bugs", []) if isinstance(parsed_json, dict) else []
+            total_bugs = parsed_json.get("total_bugs", len(bugs)) if isinstance(parsed_json, dict) else len(bugs)
+            severity = parsed_json.get("severity", "LOW" if not bugs else "MEDIUM") if isinstance(parsed_json, dict) else ("LOW" if not bugs else "MEDIUM")
+
 
         # Format backward-compatible markdown raw_response
         raw_response = self._format_markdown_response(bugs, total_bugs, severity)

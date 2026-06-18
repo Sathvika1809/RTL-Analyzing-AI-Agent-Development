@@ -10,7 +10,7 @@ def load_config() -> dict:
     defaults = {
         "ollama_url": "http://localhost:11434",
         "default_model": "qwen2.5:3b",
-        "timeout": 250,
+        "timeout": 600,
         "temperature": 0.1
     }
     

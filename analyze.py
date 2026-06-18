@@ -27,7 +27,7 @@ def analyze_rtl_file(filepath,model):
     with open(filepath, "r") as f:
         code = f.read()
     
-    prompt = f"""You are an expert RTL and SystemVerilog design engineer
+    prompt = f"""You are an expert RTL and SystemVerilog verification engineer
     Analyze ONLY the SystemVerilog code provided below.
 
     If no issues are found, explicitly state:

@@ -3,43 +3,86 @@ from datetime import datetime
 from pathlib import Path
 from src.core.base_agent import BaseAgent
 
-TIMING_ANALYSIS_PROMPT = """You are a senior RTL verification engineer specializing in checking timing and pipeline problems.
+TIMING_ANALYSIS_PROMPT = """You are a senior RTL lint and verification engineer.
 
-Analyze the following SystemVerilog code for timing issues ONLY.
-Check specifically for:
-1. Blocking assignments in always_ff blocks
-2. Signals missing from sensitivity lists in always @(*)
-3. Clock domain crossings (CDC) without synchronizers
-4. Long combinational chains between registers (timing bottleneck)
-5. Incomplete case statements or conditional branches causing latch inference
+Your task is to identify ONLY RTL timing-related issues that can be PROVEN directly from the provided SystemVerilog code.
+
+CRITICAL RULES FOR GENERALIZED TIMING ANALYSIS:
+1. IDENTIFY DECLARED IDENTIFIERS: First, inspect the RTL code and identify the exact names of all clocks, resets, and internal/port signals. You are strictly forbidden from referencing, assuming, or using any signal or clock names that are not explicitly declared in this module.
+2. DO NOT SPECULATE: Only report timing issues (such as blocking assignments in sequential blocks, manual sensitivity list issues, CDC issues, or latch inferences) that can be logically proven from the provided RTL code.
+3. CONTEXT INTEGRITY: Do not assume the existence of external clocks, synchronization cells, or constraints unless they are explicitly declared in the RTL.
+4. If no provable timing issues exist, you MUST return: {{"declared_clocks_and_resets": [], "declared_signals": [], "timing_issues": [], "total_issues": 0, "risk": "LOW"}}.
+
+Check ONLY for the following:
+
+A. BLOCKING
+
+* Blocking assignment (=) inside always_ff blocks.
+
+B. SENSITIVITY
+
+* Incomplete/manual sensitivity lists that miss signals.
+* Ignore always_comb.
+* Ignore always @(*).
+
+C. CDC
+
+* Signals transferred between different clock domains
+  without an obvious synchronizer structure.
+
+D. LATCH
+
+* Incomplete assignments in combinational logic causing
+  latch inference.
+
+E. COMBO_PATH
+
+* Report ONLY when a clearly excessive combinational chain
+  is visible in RTL.
+* Do NOT report simple comparators, muxes, arithmetic,
+  FIFO full/empty logic, or ordinary combinational logic.
+* If uncertain, do NOT report.
 
 RTL Code to analyze (File: {filename}):
+
 ```systemverilog
 {code}
 ```
 
-You MUST respond in a VALID JSON format matching the following JSON schema. Do not add any text outside the JSON.
+Return ONLY valid JSON.
 
 JSON Schema:
+
 {{
-  "timing_issues": [
-    {{
-      "type": "BLOCKING", "CDC", "SENSITIVITY", "LATCH", or "COMBO_PATH",
-      "location": "string detailing the signal name, block, or line numbers",
-      "problem": "Clear explanation of what is wrong (2 sentences max)",
-      "risk": "Silicon failure risk or timing violation description (1 sentence max)",
-      "fix": "Exact code change required to resolve the issue"
-    }}
-  ],
-  "total_issues": 0,
-  "risk": "HIGH", "MEDIUM", or "LOW"
+"declared_clocks_and_resets": [
+  "exact names of all clock and reset signals declared in the module"
+],
+"declared_signals": [
+  "exact names of all internal and port signals declared in the module"
+],
+"timing_issues": [
+{{
+"type": "BLOCKING | CDC | SENSITIVITY | LATCH | COMBO_PATH",
+"location": "line number or block description",
+"evidence": "exact RTL snippet proving the issue",
+"confidence": "HIGH | MEDIUM | LOW",
+"problem": "brief explanation",
+"risk": "brief risk description",
+"fix": "exact code change"
+}}
+],
+"total_issues": 0,
+"risk": "LOW | MEDIUM | HIGH"
 }}
 
-If no issues are found, return:
+If no provable issues exist:
+
 {{
-  "timing_issues": [],
-  "total_issues": 0,
-  "risk": "LOW"
+"declared_clocks_and_resets": [],
+"declared_signals": [],
+"timing_issues": [],
+"total_issues": 0,
+"risk": "LOW"
 }}
 """
 
@@ -63,16 +106,22 @@ class TimingAgent(BaseAgent):
             code=code
         )
 
-        result = self.call_ollama(prompt, json_mode=True)
+        result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
         if not result["success"]:
             return {"success": False, "error": result["error"]}
 
         parsed_json = self.parse_json_response(result["response"])
         
         # Ensure fallback for fields
-        issues = parsed_json.get("timing_issues", [])
-        total_issues = parsed_json.get("total_issues", len(issues))
-        risk = parsed_json.get("risk", "LOW" if not issues else "MEDIUM")
+        if isinstance(parsed_json, list):
+            issues = parsed_json
+            total_issues = len(issues)
+            risk = "MEDIUM" if issues else "LOW"
+        else:
+            issues = parsed_json.get("timing_issues", []) if isinstance(parsed_json, dict) else []
+            total_issues = parsed_json.get("total_issues", len(issues)) if isinstance(parsed_json, dict) else len(issues)
+            risk = parsed_json.get("risk", "LOW" if not issues else "MEDIUM") if isinstance(parsed_json, dict) else ("LOW" if not issues else "MEDIUM")
+
 
         # Format backward-compatible markdown raw_response
         raw_response = self._format_markdown_response(issues, total_issues, risk)

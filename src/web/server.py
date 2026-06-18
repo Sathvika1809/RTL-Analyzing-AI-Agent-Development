@@ -150,10 +150,26 @@ def analyze_rtl(request: AnalyzeRequest):
             assertion_future = executor.submit(assertion_agent.analyze, filepath)
             optimizer_future = executor.submit(optimizer_agent.analyze, filepath)
 
-            bug_result = bug_future.result()
-            timing_result = timing_future.result()
-            assertion_result = assertion_future.result()
-            optimizer_result = optimizer_future.result()
+            try:
+                bug_result = bug_future.result()
+            except Exception as e:
+                bug_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                
+            try:
+                timing_result = timing_future.result()
+            except Exception as e:
+                timing_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                
+            try:
+                assertion_result = assertion_future.result()
+            except Exception as e:
+                assertion_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+                
+            try:
+                optimizer_result = optimizer_future.result()
+            except Exception as e:
+                optimizer_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+
     else:
         # Run sequentially (safer for CPU-based local Ollama)
         bug_result = bug_agent.analyze(filepath)
