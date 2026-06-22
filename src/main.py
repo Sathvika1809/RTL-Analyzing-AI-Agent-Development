@@ -28,8 +28,8 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
         return
 
     print("=" * 80)
-    print(f"🌟 RTL MULTI-AGENT COMPILER & VERIFIER - MODEL: {model}")
-    print(f"⚙️  Execution Scheme: {'Parallel Threads' if parallel else 'Sequential Pipeline'}")
+    print(f"RTL MULTI-AGENT COMPILER & VERIFIER - MODEL: {model}")
+    print(f"Execution Scheme: {'Parallel Threads' if parallel else 'Sequential Pipeline'}")
     print("=" * 80)
 
     # Initialize agents
@@ -137,7 +137,7 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
     # Print summary dashboard to console
     total_elapsed = time.time() - start_total
     print(f"\n{'='*82}")
-    print(f"📊 SUMMARY REPORT METRICS DASHBOARD")
+    print(f"SUMMARY REPORT METRICS DASHBOARD")
     print(f"{'='*82}")
     print(f"{'RTL Design File':<22} {'Bugs':<6} {'Severity':<10} {'Timing':<8} {'Risk':<8} {'SVA':<6} {'Opts':<6} {'Time'}")
     print(f"{'-'*82}")
