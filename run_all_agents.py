@@ -5,13 +5,12 @@ Phase 3 - Master Script
 
 What this does:
 - Finds all .sv files in rtl_files/
-- Runs all 4 specialized agents on each file
+- Runs all 4 specialized agents on each file sequentially
 - Combines results into one report per file
 - Prints a summary dashboard at the end
 
 How to run:
     python run_all_agents.py
-    python run_all_agents.py --parallel
 """
 
 import os
@@ -19,14 +18,12 @@ import glob
 import time
 import argparse
 from datetime import datetime
-import concurrent.futures
 
 from src.agents.bug_agent import BugAgent
 from src.agents.timing_agent import TimingAgent
 from src.agents.assertion_agent import AssertionAgent
 from src.agents.optimize_agent import OptimizerAgent
 from src.core.config import DEFAULT_MODEL
-
 
 
 def save_combined_report(filename, bug_result, timing_result,
@@ -95,10 +92,9 @@ def save_combined_report(filename, bug_result, timing_result,
 
 def run_all_agents(rtl_folder="rtl_files",
                    output_folder="reports",
-                   model="qwen2.5:3b",
-                   parallel=False):
+                   model="qwen2.5:3b"):
     """
-    Main function. Runs all 4 agents on every .sv file.
+    Main function. Runs all 4 agents sequentially on every .sv file.
     """
     model = model if model else DEFAULT_MODEL
     start_total = time.time()
@@ -121,7 +117,6 @@ def run_all_agents(rtl_folder="rtl_files",
     optimizer_agent = OptimizerAgent(model=model)
 
     print(f"Model: {model}")
-    print(f"Execution mode: {'Parallel' if parallel else 'Sequential'}")
     print(f"Files to analyze: {len(files)}\n")
     print("=" * 50)
 
@@ -136,57 +131,27 @@ def run_all_agents(rtl_folder="rtl_files",
 
         file_start = time.time()
 
-        if parallel:
-            # Run all 4 agents in parallel.
-            # This is faster on strong hardware, but can overload local Ollama.
-            print("Running all 4 specialized agents in parallel...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                bug_future = executor.submit(bug_agent.analyze, filepath)
-                timing_future = executor.submit(timing_agent.analyze, filepath)
-                assertion_future = executor.submit(assertion_agent.analyze, filepath)
-                optimizer_future = executor.submit(optimizer_agent.analyze, filepath)
+        print("Running all 4 specialized agents sequentially...")
 
-                try:
-                    bug_result = bug_future.result()
-                except Exception as e:
-                    bug_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+        try:
+            bug_result = bug_agent.analyze(filepath)
+        except Exception as e:
+            bug_result = {"success": False, "error": f"Exception in BugAgent: {str(e)}"}
 
-                try:
-                    timing_result = timing_future.result()
-                except Exception as e:
-                    timing_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+        try:
+            timing_result = timing_agent.analyze(filepath)
+        except Exception as e:
+            timing_result = {"success": False, "error": f"Exception in TimingAgent: {str(e)}"}
 
-                try:
-                    assertion_result = assertion_future.result()
-                except Exception as e:
-                    assertion_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
+        try:
+            assertion_result = assertion_agent.analyze(filepath)
+        except Exception as e:
+            assertion_result = {"success": False, "error": f"Exception in AssertionAgent: {str(e)}"}
 
-                try:
-                    optimizer_result = optimizer_future.result()
-                except Exception as e:
-                    optimizer_result = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
-        else:
-            # Run agents sequentially to avoid timeout/resource contention.
-            print("Running all 4 specialized agents sequentially...")
-            try:
-                bug_result = bug_agent.analyze(filepath)
-            except Exception as e:
-                bug_result = {"success": False, "error": f"Exception in BugAgent: {str(e)}"}
-
-            try:
-                timing_result = timing_agent.analyze(filepath)
-            except Exception as e:
-                timing_result = {"success": False, "error": f"Exception in TimingAgent: {str(e)}"}
-
-            try:
-                assertion_result = assertion_agent.analyze(filepath)
-            except Exception as e:
-                assertion_result = {"success": False, "error": f"Exception in AssertionAgent: {str(e)}"}
-
-            try:
-                optimizer_result = optimizer_agent.analyze(filepath)
-            except Exception as e:
-                optimizer_result = {"success": False, "error": f"Exception in OptimizerAgent: {str(e)}"}
+        try:
+            optimizer_result = optimizer_agent.analyze(filepath)
+        except Exception as e:
+            optimizer_result = {"success": False, "error": f"Exception in OptimizerAgent: {str(e)}"}
 
         # Save combined report
         report_path = save_combined_report(
@@ -237,12 +202,10 @@ if __name__ == "__main__":
     parser.add_argument("--rtl-folder", default="rtl_files", help="Folder containing .sv files")
     parser.add_argument("--output-folder", default="reports", help="Folder for generated reports")
     parser.add_argument("--model", default="qwen2.5:3b", help="Ollama model name")
-    parser.add_argument("--parallel", action="store_true", help="Run agents in parallel. Faster, but may timeout on local CPU.")
     args = parser.parse_args()
 
     run_all_agents(
         rtl_folder=args.rtl_folder,
         output_folder=args.output_folder,
-        model=args.model,
-        parallel=args.parallel
+        model=args.model
     )

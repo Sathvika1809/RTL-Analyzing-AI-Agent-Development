@@ -20,6 +20,16 @@ class BaseAgent:
         self.logs_dir = os.path.join(self.project_root, "logs")
         os.makedirs(self.logs_dir, exist_ok=True)
 
+    def _ollama_error(self, message: str) -> str:
+        return (
+            f"{message}\n"
+            f"Ollama URL: {OLLAMA_URL}\n"
+            f"Model: {self.model}\n"
+            "Checks: make sure `ollama serve` is running, the selected model is pulled, "
+            "and the model can finish this prompt on your machine. If the model is just "
+            "slow, increase config/settings.json `timeout` or use a smaller model."
+        )
+
     def call_ollama(self, prompt: str, json_mode: bool = True, max_tokens: int = 1500) -> dict:
         """
         Sends the prompt to Ollama.
@@ -44,18 +54,33 @@ class BaseAgent:
             resp = requests.post(
                 f"{OLLAMA_URL}/api/generate",
                 json=payload,
-                timeout=TIMEOUT
+                timeout=(10, TIMEOUT)
             )
             elapsed = time.time() - start_time
             
             if resp.status_code != 200:
                 return {
                     "success": False,
-                    "error": f"HTTP Error {resp.status_code}: {resp.text}",
+                    "error": self._ollama_error(
+                        f"Ollama returned HTTP {resp.status_code}: {resp.text[:500]}"
+                    ),
+                    "error_type": "ollama_http_error",
                     "elapsed": round(elapsed, 1)
                 }
             
-            response_json = resp.json()
+            try:
+                response_json = resp.json()
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "error": (
+                        "Ollama returned a non-JSON HTTP response. "
+                        f"Details: {e}. Raw response preview: {resp.text[:500]}"
+                    ),
+                    "error_type": "ollama_invalid_http_json",
+                    "elapsed": round(elapsed, 1)
+                }
+
             response_text = response_json.get("response", "")
             
             return {
@@ -64,11 +89,53 @@ class BaseAgent:
                 "elapsed": round(elapsed, 1)
             }
             
+        except requests.exceptions.ReadTimeout:
+            elapsed = time.time() - start_time
+            return {
+                "success": False,
+                "error": self._ollama_error(
+                    f"Ollama read timed out after {TIMEOUT}s. The server accepted "
+                    "the request but did not finish generating a response in time."
+                ),
+                "error_type": "ollama_read_timeout",
+                "elapsed": round(elapsed, 1)
+            }
+        except requests.exceptions.ConnectTimeout:
+            elapsed = time.time() - start_time
+            return {
+                "success": False,
+                "error": self._ollama_error(
+                    "Timed out while connecting to Ollama. The local server may not be running."
+                ),
+                "error_type": "ollama_connect_timeout",
+                "elapsed": round(elapsed, 1)
+            }
+        except requests.exceptions.ConnectionError as e:
+            elapsed = time.time() - start_time
+            return {
+                "success": False,
+                "error": self._ollama_error(
+                    f"Could not connect to Ollama. Details: {e}"
+                ),
+                "error_type": "ollama_connection_error",
+                "elapsed": round(elapsed, 1)
+            }
+        except requests.exceptions.RequestException as e:
+            elapsed = time.time() - start_time
+            return {
+                "success": False,
+                "error": self._ollama_error(
+                    f"Ollama HTTP request failed. Details: {e}"
+                ),
+                "error_type": "ollama_request_error",
+                "elapsed": round(elapsed, 1)
+            }
         except Exception as e:
             elapsed = time.time() - start_time
             return {
                 "success": False,
-                "error": str(e),
+                "error": f"Unexpected agent error while calling Ollama: {e}",
+                "error_type": "unexpected_ollama_error",
                 "elapsed": round(elapsed, 1)
             }
 
@@ -103,8 +170,20 @@ class BaseAgent:
                 except Exception as inner_e:
                     print(f"Error parsing extracted JSON block: {inner_e}")
             
-            print(f"Error: Failed to parse LLM response as JSON. Content: {raw_response}")
-            return {}
+            message = (
+                "Failed to parse Ollama response as JSON. "
+                f"Raw response preview: {raw_response[:1000]}"
+            )
+            print(f"Error: {message}")
+            return {
+                "__parse_error__": message,
+                "raw_response": raw_response,
+            }
+
+    def json_parse_error(self, parsed_response: dict) -> str:
+        if isinstance(parsed_response, dict):
+            return parsed_response.get("__parse_error__", "")
+        return ""
 
     def log_run(self, filename: str, log_data: dict):
         """Centralized logging in JSONL format for tracking agent runs."""

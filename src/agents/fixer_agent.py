@@ -74,6 +74,10 @@ class FixerAgent(BaseAgent):
             return {"success": False, "error": result["error"]}
 
         parsed_json = self.parse_json_response(result["response"])
+        parse_error = self.json_parse_error(parsed_json)
+        if parse_error:
+            return {"success": False, "error": parse_error}
+
         fixed_code = parsed_json.get("fixed_code", "")
         explanation = parsed_json.get("explanation", "RTL code repaired.")
 
