@@ -1,6 +1,6 @@
 # Phase 3 RTL Analysis Report: counter.sv
 
-**Generated:** 2026-06-30 14:28:56
+**Generated:** 2026-07-15 13:51:54
 
 ---
 
@@ -72,7 +72,7 @@ RISK LEVEL: MEDIUM
 
 **Total assertions generated:** 2
 **Coverage level:** MEDIUM
-**Time taken:** 0.0016915000014705583s
+**Time taken:** 0.0009837000397965312s
 
 ASSERTION #1
 Type: RESET
@@ -97,7 +97,7 @@ COVERAGE LEVEL: MEDIUM
 
 **Total suggestions:** 0
 **Code quality:** HIGH
-**Time taken:** 212.9s
+**Time taken:** 245.7s
 
 NO OPTIMIZATIONS SUGGESTED
 

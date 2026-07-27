@@ -5,62 +5,153 @@ from datetime import datetime
 import time
 from pathlib import Path
 from src.core.base_agent import BaseAgent
-from src.core.rtl_parser import extract_declared_identifiers, static_assertions, references_only_declared, is_concrete_finding  # ← was rtl_static
+from src.core.rtl_parser import extract_declared_identifiers, static_assertions, validate_sva_against_rtl, validate_immediate_assertions_against_rtl
 
-ASSERTION_ANALYSIS_PROMPT = """You are a senior RTL verification engineer specializing in writing SystemVerilog Assertions (SVA).
 
-Analyze the following SystemVerilog module and generate SVA assertions.
+ASSERTION_ANALYSIS_PROMPT = """You are a senior RTL Verification Engineer specializing in SystemVerilog Assertions (SVA).
 
-CRITICAL RULES FOR GENERALIZED SVA GENERATION:
-1. STRICT VARIABLE BINDING: First, inspect the RTL code and identify the exact names of the clock, reset, and all declared signals. Every variable, signal, parameter, clock, or reset used in your generated SVA code MUST match one of these declared names exactly. Do NOT assume generic signals (like an 'enable' or 'ready' signal) or parameters (like 'WIDTH') if they are not explicitly present in the provided RTL code.
-2. SYNTACTIC ACCURACY: Write complete, syntactically correct SVA properties using the declared clock and reset. Ensure correct implication operators (e.g. `|=>` or `|->`) are used.
-3. ADAPTIVE RESET BEHAVIOR: Detect whether the reset signal is active-high or active-low, synchronous or asynchronous, and write the reset assertions matching that exact behavior and signal name.
-4. If no assertions can be safely generated, you MUST return: {{"declared_clocks_and_resets": [], "declared_signals": [], "assertions": [], "total_assertions": 0, "coverage": "LOW"}}.
-5. SYNTAX RULE: Always use `assert property (@(posedge <clk>) disable iff (<reset_condition>) <property>);`. Never emit bare `(posedge ...) assert` — that is illegal SystemVerilog.
+Your task is to analyze the RTL module and generate meaningful, behavior-based SystemVerilog Assertions.
 
-Prefer concrete assertions over generic recommendations:
-1. RESET BEHAVIOR: After reset, outputs should reach known values
-2. SIGNAL RANGES: Outputs should stay within valid bit ranges
-3. STATE TRANSITIONS: Valid state changes only (e.g. for FSMs)
-4. OVERFLOW PROTECTION: Counters/accumulators should be checked
-5. INPUT VALIDITY: Critical inputs behave as expected
+Your goal is NOT to maximize the number of assertions.
+Your goal is to verify the actual functionality implemented by the RTL.
 
-RTL Code to analyze (File: {filename}):
+====================================================
+STEP 1 : UNDERSTAND THE RTL
+====================================================
+
+Before generating any assertion, internally analyze the RTL and determine:
+
+• What is the purpose of this module?
+• Which signals are inputs?
+• Which signals are outputs?
+• Which signals are sequential registers?
+• Which signals are combinational?
+• Which signals control behavior?
+• Which signals are clocks?
+• Which signals are resets?
+• What functionality is implemented?
+
+Do NOT output this reasoning.
+
+====================================================
+STEP 2 : IDENTIFY VERIFIABLE BEHAVIOR
+====================================================
+
+Based only on the RTL implementation, identify behaviors that should always hold.
+
+Examples include (when applicable):
+
+• Reset behavior
+• One-hot or mutual exclusion properties
+• Input-output relationships
+• State transitions
+• Counter limits
+• FIFO behavior
+• Arbitration correctness
+• Handshake protocol correctness
+• Pipeline ordering
+• Register update behavior
+• Memory access legality
+• Overflow/underflow protection
+• Parameter-dependent constraints
+• Combinational output correctness
+
+Do NOT assume functionality that does not exist.
+
+====================================================
+STEP 3 : GENERATE ASSERTIONS
+====================================================
+
+Generate assertions ONLY for behaviors that can be logically inferred from the RTL.
+
+Prefer behavioral assertions over generic assertions.
+
+Good assertions verify functionality.
+
+Weak assertions merely check unknown values.
+
+Examples of LOW PRIORITY assertions:
+
+• !$isunknown(...)
+• Signal width checks
+• Constant comparisons without behavioral meaning
+
+Generate these ONLY if no stronger behavioral property exists.
+
+====================================================
+STEP 4 : USE ONLY DECLARED SIGNALS
+====================================================
+
+Inspect the RTL carefully.
+
+Every identifier appearing anywhere inside the generated assertion MUST already exist in the RTL.
+
+Never invent:
+
+enable
+ready
+valid
+count
+state
+WIDTH
+DEPTH
+data
+address
+
+or any other identifier.
+
+Use ONLY declared ports, parameters, registers and wires.
+
+====================================================
+STEP 5 : RESET HANDLING
+====================================================
+
+Automatically determine
+
+• active-high or active-low reset
+• synchronous or asynchronous reset
+
+Use the proper
+
+disable iff(...)
+
+condition.
+
+Do not assume reset names.
+
+====================================================
+STEP 6 : BEFORE RETURNING ZERO ASSERTIONS
+====================================================
+
+Before deciding that no assertions can be generated, you MUST check whether the RTL allows assertions for:
+
+✓ Reset behavior
+✓ Sequential registers
+✓ Outputs
+✓ Combinational logic
+✓ Protocol behavior
+✓ State transitions
+✓ Parameters
+✓ Mutual exclusion
+✓ Input-output relationships
+
+If at least ONE meaningful behavioral assertion can be derived,
+generate it.
+
+Return zero assertions ONLY if none of the above are applicable.
+
+====================================================
+RTL MODULE
+====================================================
+
+Filename:
+{filename}
+
 ```systemverilog
 {code}
-```
 
-You MUST respond in a VALID JSON format matching the following JSON schema. Do not add any text outside the JSON.
-
-JSON Schema:
-{{
-  "declared_clocks_and_resets": [
-    "exact names of clock and reset signals in the module"
-  ],
-  "declared_signals": [
-    "list of all valid signals declared in the module"
-  ],
-  "assertions": [
-    {{
-      "type": "RESET" | "RANGE" | "TRANSITION" | "OVERFLOW" | "INPUT",
-      "signal": "exact name of the signal covered",
-      "sva_code": "assert property (@(posedge rd_clk) disable iff (!rd_rst_n) <your_condition>);",
-      "description": "Clear explanation of what this assertion checks"
-    }}
-  ],
-  "total_assertions": 0,
-  "coverage": "HIGH" | "MEDIUM" | "LOW"
-}}
-
-If no assertions can be generated, return:
-{{
-  "declared_clocks_and_resets": [],
-  "declared_signals": [],
-  "assertions": [],
-  "total_assertions": 0,
-  "coverage": "LOW"
-}}
 """
+
 
 
 class AssertionAgent(BaseAgent):
@@ -164,44 +255,50 @@ class AssertionAgent(BaseAgent):
                 "elapsed_s": elapsed,
             }
 
+        # If the module is combinational-only, allow an LLM fallback to
+        # generate *immediate* assertions (not concurrent properties).
         if not meta["clocks"]:
-            
-            # Fallback: if clock detection fails, do not ask the LLM to invent
-            # clocked assertions; return no assertions.
-            immediate = []
-            elapsed   = time.monotonic() - t_start
-            if immediate:
-                return {
-                    "success": True,
-                    "filename": path.name,
-                    "filepath": str(path),
-                    "timestamp": datetime.now().isoformat(),
-                    "model": self.model,
-                    "assertions": immediate,
-                    "total_assertions": len(immediate),
-                    "coverage": "MEDIUM" if immediate else "LOW",
-                    "raw_response": self._format_markdown_response(immediate, len(immediate), "MEDIUM" if immediate else "LOW"),
-                    "elapsed_s": elapsed,
-                }
+            print(f"  [AssertionAgent] {path.name} has no detected clock — generating combinational immediate assertions via LLM.")
+            comb_only_mode = True
+        else:
+            comb_only_mode = False
 
-            # Genuinely nothing to do — log it clearly
-            print(f"  [AssertionAgent] {path.name} is combinational with no static checks — skipping.")
-            return {
-                "success": True,
-                "filename": path.name,
-                "filepath": str(path),
-                "timestamp": datetime.now().isoformat(),
-                "model": self.model,
-                "assertions": [],
-                "total_assertions": 0,
-                "coverage": "LOW",
-                "raw_response": self._format_markdown_response([], 0, "LOW"),
-                "elapsed_s": elapsed,
-            }
+        # When no clock is present, we still run the LLM path but require it
+        # to emit immediate assertions (not concurrent assert property).
+        if comb_only_mode:
+            comb_prompt = (
+                "COMBINATIONAL-MODULE ASSERTION MODE (NO CLOCK)\n"
+                "You MUST output immediate assertions only (SystemVerilog `assert (...)`), "
+                "suitable for an `always_comb` context. Do NOT output `assert property` "
+                "concurrent properties.\n"
+                "Each assertion must only reference identifiers declared in the RTL.\n"
+            )
+            prompt = ASSERTION_ANALYSIS_PROMPT + "\n" + comb_prompt
+        else:
+            prompt = None
 
         # existing LLM path...
 
-        prompt = ASSERTION_ANALYSIS_PROMPT.format(filename=path.name, code=code)
+
+        from src.core.semantic_chunker import chunk_sv, select_relevant_chunks, chunks_to_prompt_text
+
+        # Semantic chunking to ground assertions in the most relevant RTL regions.
+        chunks = chunk_sv(code)
+        selected = select_relevant_chunks(
+            chunks,
+            query=ASSERTION_ANALYSIS_PROMPT,
+            top_k=14,
+            max_total_chars=8500,
+        )
+        code_ctx = chunks_to_prompt_text(selected) if selected else code
+
+        if comb_only_mode:
+            prompt = prompt if prompt is not None else (ASSERTION_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx))
+            # append code context after the base prompt, since prompt currently includes comb_prompt
+            prompt = prompt + "\n\n" + "```systemverilog\n" + code_ctx + "\n```"
+        else:
+            prompt = ASSERTION_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx)
+
 
         # FIX 5: single initialisation block (duplicate removed)
         attempt              = 1
@@ -277,15 +374,20 @@ class AssertionAgent(BaseAgent):
             | set(declared_meta.get("resets", []))
         )
 
-        # references_only_declared() checks identifiers in both `signal` and
-        # `sva_code` fields (and filters out known SV keywords).
-        from src.core.rtl_parser import references_only_declared, is_concrete_finding
-        assertions = [
-            a for a in assertions
-            if isinstance(a, dict)
-            and references_only_declared(a, declared_names)
-            and is_concrete_finding(a, declared_names)
-        ]
+        # Evidence-based semantic filtering (anti-hallucination).
+        # - Clocked modules: validate concurrent `assert property` via clock/reset evidence.
+        # - Combinational-only modules: validate immediate assertions via declared-only token evidence.
+        if meta["clocks"]:
+            assertions = [
+                a for a in assertions
+                if isinstance(a, dict) and validate_sva_against_rtl(code, a)
+            ]
+        else:
+            assertions = [
+                a for a in assertions
+                if isinstance(a, dict) and validate_immediate_assertions_against_rtl(code, a)
+            ]
+
 
         total_assertions = len(assertions)
         coverage         = "MEDIUM" if assertions else "LOW"

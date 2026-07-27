@@ -119,7 +119,20 @@ class TimingAgent(BaseAgent):
                 "elapsed_s":     0.0,
             }
 
-        prompt = TIMING_ANALYSIS_PROMPT.format(filename=path.name, code=code)
+        from src.core.semantic_chunker import chunk_sv, select_relevant_chunks, chunks_to_prompt_text
+
+        # Semantic chunking to reduce hallucinations and focus timing checks.
+        chunks = chunk_sv(code)
+        selected = select_relevant_chunks(
+            chunks,
+            query=TIMING_ANALYSIS_PROMPT,
+            top_k=12,
+            max_total_chars=9000,
+        )
+        code_ctx = chunks_to_prompt_text(selected) if selected else code
+
+        prompt = TIMING_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx)
+
         result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
         if not result["success"]:
             return {"success": False, "error": result["error"]}

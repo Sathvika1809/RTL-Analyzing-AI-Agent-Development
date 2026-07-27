@@ -1,12 +1,12 @@
 # Phase 3 RTL Analysis Report: alu.sv
 
-**Generated:** 2026-06-30 14:12:40
+**Generated:** 2026-07-15 12:50:27
 
 ---
 
 ## Bug Analysis
 
-**Total bugs found:** 2
+**Total bugs found:** 3
 **Severity:** HIGH
 **Time taken:** 0.0s
 
@@ -24,7 +24,14 @@ Problem: result is compared to a 9-bit sized literal, but result is declared as 
 Impact: Width mismatch can cause truncation or unintended extension during simulation.
 Fix: Use a literal resized to [WIDTH-1:0] (or parameterize the literal) so the bit-widths match.
 
-TOTAL BUGS: 2
+BUG #3
+Type: FUNCTIONAL
+Location: overflow output port
+Problem: Output overflow is declared but never assigned anywhere in the module.
+Impact: Output will be X or high-Z in simulation and synthesis.
+Fix: Drive overflow from an always block or continuous assignment for all conditions.
+
+TOTAL BUGS: 3
 SEVERITY: HIGH
 
 ---
@@ -51,7 +58,7 @@ RISK LEVEL: MEDIUM
 
 **Total assertions generated:** 0
 **Coverage level:** LOW
-**Time taken:** 0.0016994999896269292s
+**Time taken:** 0.0008905999129638076s
 
 NO ASSERTIONS GENERATED
 
@@ -63,14 +70,10 @@ COVERAGE LEVEL: LOW
 
 ## Code Optimization Suggestions
 
-**Total suggestions:** 0
-**Code quality:** HIGH
-**Time taken:** 213.4s
-
-NO OPTIMIZATIONS SUGGESTED
-
-TOTAL OPTIMIZATIONS: 0
-QUALITY SCORE: HIGH
+Error: Could not connect to Ollama. Details: HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded with url: /api/generate (Caused by NewConnectionError("HTTPConnection(host='localhost', port=11434): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+Ollama URL: http://localhost:11434
+Model: qwen2.5:3b
+Checks: make sure `ollama serve` is running, the selected model is pulled, and the model can finish this prompt on your machine. If the model is just slow, increase config/settings.json `timeout` or use a smaller model.
 
 
 ---

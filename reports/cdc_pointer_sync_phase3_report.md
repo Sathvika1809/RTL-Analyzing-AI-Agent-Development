@@ -1,19 +1,15 @@
 # Phase 3 RTL Analysis Report: cdc_pointer_sync.sv
 
-**Generated:** 2026-06-30 14:25:24
+**Generated:** 2026-07-15 13:47:48
 
 ---
 
 ## Bug Analysis
 
-**Total bugs found:** 0
-**Severity:** LOW
-**Time taken:** 241.3s
-
-NO BUGS DETECTED
-
-TOTAL BUGS: 0
-SEVERITY: LOW
+Error: Ollama read timed out after 300s. The server accepted the request but did not finish generating a response in time.
+Ollama URL: http://localhost:11434
+Model: qwen2.5:3b
+Checks: make sure `ollama serve` is running, the selected model is pulled, and the model can finish this prompt on your machine. If the model is just slow, increase config/settings.json `timeout` or use a smaller model.
 
 
 ---
@@ -22,7 +18,7 @@ SEVERITY: LOW
 
 **Total issues found:** 0
 **Risk level:** LOW
-**Time taken:** 260.0s
+**Time taken:** 232.5s
 
 NO TIMING ISSUES DETECTED
 
@@ -36,7 +32,7 @@ RISK LEVEL: LOW
 
 **Total assertions generated:** 2
 **Coverage level:** MEDIUM
-**Time taken:** 0.009495499994955026s
+**Time taken:** 0.004398800083436072s
 
 ASSERTION #1
 Type: RESET
@@ -59,33 +55,15 @@ COVERAGE LEVEL: MEDIUM
 
 ## Code Optimization Suggestions
 
-**Total suggestions:** 2
-**Code quality:** MEDIUM
-**Time taken:** 261.8s
+**Total suggestions:** 0
+**Code quality:** HIGH
+**Time taken:** 227.9s
 
-OPTIMIZATION #1
-Type: HARDCODED
-Location: parameter ADDR_WIDTH = 4
-Issue: The parameter value of 4 is hardcoded and should be configurable.
-Benefit: Improves reusability and maintainability by allowing different widths for the address.
-Suggestion: parameter ADDR_WIDTH
+NO OPTIMIZATIONS SUGGESTED
 
-OPTIMIZATION #2
-Type: REDUNDANT
-Location: always_ff @(posedge rd_clk or negedge rd_rst_n) begin
-Issue: The logic inside the always block can be simplified by removing redundant assignments.
-Benefit: Improves readability and reduces code complexity.
-Suggestion: always_ff @(posedge rd_clk or negedge rd_rst_n) begin
-    if (!rd_rst_n) begin
-        sync_reg_0 <= '0;
-        sync_reg_1 <= '0;
-    end else begin
-        sync_reg_1 <= wr_ptr_bin;
-    end
-end
+TOTAL OPTIMIZATIONS: 0
+QUALITY SCORE: HIGH
 
-TOTAL OPTIMIZATIONS: 2
-QUALITY SCORE: MEDIUM
 
 ---
 

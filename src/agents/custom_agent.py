@@ -32,11 +32,29 @@ class CustomAgent(BaseAgent):
         code = path.read_text(encoding="utf-8", errors="replace")
         print(f"  Custom agent addressing query for: {path.name}")
 
+        # Semantic chunking for fewer irrelevant tokens and fewer hallucinations.
+        from src.core.semantic_chunker import (
+            chunk_sv,
+            select_relevant_chunks,
+            chunks_to_prompt_text,
+        )
+
+        chunks = chunk_sv(code)
+        # For custom prompts, route using the user's query (not the whole prompt).
+        selected = select_relevant_chunks(
+            chunks,
+            query=query,
+            top_k=10,
+            max_total_chars=14000,
+        )
+        code_ctx = chunks_to_prompt_text(selected) if selected else code
+
         prompt = CUSTOM_PROMPT.format(
             filename=path.name,
-            code=code,
+            code=code_ctx,
             query=query
         )
+
 
         # We request markdown instead of JSON
         result = self.call_ollama(prompt, json_mode=False, max_tokens=2500)

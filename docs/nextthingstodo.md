@@ -1,4 +1,4 @@
-## Final Industry Level
+## Final Industry Leve
 
 to make it a complete semantic RTL verification engine, you need to move beyond “finding suspicious code patterns” and toward “understanding what the RTL is supposed to do, then proving whether it does it.”
 

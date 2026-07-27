@@ -1,6 +1,6 @@
 # Phase 3 RTL Analysis Report: round_robin_arbiter.sv
 
-**Generated:** 2026-06-30 15:01:13
+**Generated:** 2026-07-15 13:33:15
 
 ---
 
@@ -8,7 +8,7 @@
 
 **Total bugs found:** 0
 **Severity:** LOW
-**Time taken:** 185.7s
+**Time taken:** 207.8s
 
 NO BUGS DETECTED
 
@@ -22,7 +22,7 @@ SEVERITY: LOW
 
 **Total issues found:** 0
 **Risk level:** LOW
-**Time taken:** 120.0s
+**Time taken:** 128.8s
 
 NO TIMING ISSUES DETECTED
 
@@ -36,7 +36,7 @@ RISK LEVEL: LOW
 
 **Total assertions generated:** 2
 **Coverage level:** MEDIUM
-**Time taken:** 0.003158599996822886s
+**Time taken:** 0.0028320999117568135s
 
 ASSERTION #1
 Type: RESET
@@ -59,33 +59,11 @@ COVERAGE LEVEL: MEDIUM
 
 ## Code Optimization Suggestions
 
-**Total suggestions:** 3
-**Code quality:** MEDIUM
-**Time taken:** 240.8s
+Error: Ollama read timed out after 300s. The server accepted the request but did not finish generating a response in time.
+Ollama URL: http://localhost:11434
+Model: qwen2.5:3b
+Checks: make sure `ollama serve` is running, the selected model is pulled, and the model can finish this prompt on your machine. If the model is just slow, increase config/settings.json `timeout` or use a smaller model.
 
-OPTIMIZATION #1
-Type: HARDCODED
-Location: line 10, line 24, line 35-36
-Issue: Hardcoded values can be made into parameters for flexibility and maintainability.
-Benefit: Improves code reusability and reduces the risk of hard-coded value changes affecting the design.
-Suggestion: Add parameter NUM_REQS to module declaration.
-
-OPTIMIZATION #2
-Type: REDUNDANT
-Location: line 24, line 35-36
-Issue: The logic in the always_comb blocks can be simplified for better readability.
-Benefit: Reduces complexity and makes the code easier to understand.
-Suggestion: Simplify the logic in the always_comb blocks by removing redundant checks.
-
-OPTIMIZATION #3
-Type: STYLE
-Location: line 24, line 35-36
-Issue: The use of nested for loops can be replaced with a single loop and conditional statement.
-Benefit: Improves readability by reducing the nesting level in the code.
-Suggestion: Replace the nested for loops with a single loop and conditional statement.
-
-TOTAL OPTIMIZATIONS: 3
-QUALITY SCORE: MEDIUM
 
 ---
 

@@ -1,21 +1,30 @@
-# TODO
+# TODO (Agentic RTL Verifier / Anti-Hallucination)
 
-## Step 1: Validate root cause
-- [x] Read `rtl_files/alu.sv` and confirm hardcoded sized literal (`9'b0`) and latch issue.
-- [x] Read `src/core/rtl_parser.py` and identify missing checks for width mismatches in procedural expressions.
-- [x] Read `src/agents/assertion_agent.py` and confirm semantic filtering exists for LLM assertion outputs.
+## Active: Retrieval + Local-LLM Robust Synth Loop
 
-## Step 2: Harden deterministic analyzer (no LLM)
-- [x] Update `src/core/rtl_parser.py`:
-  - Add procedural sized-literal width mismatch detection (e.g. `if (result == 9'b0)`), comparing literal bit-count to declared width of the signal.
-  - Improve undriven output port detection / driven-LHS extraction inside `always_comb` + `case`.
+### Additionally: Semantic-grounded anti-hallucination for Phase-3 Agents
+- [x] Tighten semantic chunking (more/less chars) for Bug/Timing/Assertion/Optimize agents to reduce hallucinations.
 
-## Step 3: Wire new finding type into report
-- [x] Ensure new findings surface through `static_bug_findings()` and are included in `bug_agent` markdown.
 
-## Step 4: Regression
-- [x] Run the parser/agent path for `rtl_files/alu.sv` and confirm:
-  - Width mismatch is reported.
-  - Any “unassigned port” issue is detected.
-  - No spurious hallucinated names appear.
+### Step 1 — Replace `kb` TF-IDF retrieval in `rag_pipeline.py`
+- [ ] Update `SemanticHardwareRetriever` to pull from actual project RTL sources (e.g. `rtl_files/*.sv` / `rtl_files/*.v`).
+- [ ] Use `src/core/semantic_chunker.py` (`chunk_sv`, `select_relevant_chunks`, `chunks_to_prompt_text`) to build grounded context.
+- [ ] Remove TF-IDF/KB dependency from generation path.
+
+### Step 2 — Declared-only gating for generated synthesis outputs
+- [ ] After LLM generation, validate that the generated modules only reference declared identifiers for that generated code.
+- [ ] If non-declared identifiers are detected, re-prompt with a strict “fix only to use declared identifiers” instruction.
+
+### Step 3 — Evidence-aware Verilator repair prompts
+- [ ] Parse Verilator stderr and extract error summaries (e.g., undefined identifiers, latches, etc.).
+- [ ] Provide the relevant previously-retrieved chunks + error summary in the repair prompt.
+- [ ] Tighten retry loop stopping conditions (zero critical errors / no undefined identifiers).
+
+### Step 4 — Update progress docs
+- [ ] Update `PROJECT_PROGRESS.md` with completion markers for the above changes.
+- [ ] Ensure done criteria for anti-hallucination are reflected.
+
+## Notes
+- The current repo already has evidence validators in `src/core/rtl_parser.py` for SVA and optimization.
+- This task extends that philosophy to RTL synthesis/rewrite in `rag_pipeline.py`.
 

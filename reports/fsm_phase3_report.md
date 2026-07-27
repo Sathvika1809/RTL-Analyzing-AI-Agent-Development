@@ -1,6 +1,6 @@
 # Phase 3 RTL Analysis Report: fsm.sv
 
-**Generated:** 2026-06-30 14:52:06
+**Generated:** 2026-07-15 13:22:36
 
 ---
 
@@ -86,7 +86,7 @@ RISK LEVEL: MEDIUM
 
 **Total assertions generated:** 2
 **Coverage level:** MEDIUM
-**Time taken:** 0.00228169999900274s
+**Time taken:** 0.0018584000645205379s
 
 ASSERTION #1
 Type: RESET
@@ -109,26 +109,15 @@ COVERAGE LEVEL: MEDIUM
 
 ## Code Optimization Suggestions
 
-**Total suggestions:** 2
-**Code quality:** MEDIUM
-**Time taken:** 235.4s
+**Total suggestions:** 0
+**Code quality:** HIGH
+**Time taken:** 83.4s
 
-OPTIMIZATION #1
-Type: HARDCODED
-Location: always_comb block in case (current_state)
-Issue: Hardcoded values for state transitions can be made more flexible with parameters.
-Benefit: Improves code maintainability and reusability.
-Suggestion: Add a parameter to define the states and their corresponding next states.
+NO OPTIMIZATIONS SUGGESTED
 
-OPTIMIZATION #2
-Type: STYLE
-Location: always_comb block in case (current_state)
-Issue: The logic for each state is duplicated. Simplify the combinatorial blocks.
-Benefit: Reduces code duplication and improves readability.
-Suggestion: Combine the always_comb blocks into a single block with conditional statements.
+TOTAL OPTIMIZATIONS: 0
+QUALITY SCORE: HIGH
 
-TOTAL OPTIMIZATIONS: 2
-QUALITY SCORE: MEDIUM
 
 ---
 

@@ -2,63 +2,64 @@ import os
 from datetime import datetime
 from pathlib import Path
 from src.core.base_agent import BaseAgent
-from src.core.rtl_parser import (          # ← was rtl_static
+from src.core.rtl_parser import (
     extract_declared_identifiers,
-    is_concrete_finding,
-    references_only_declared,
     static_optimizations,
+    validate_optimization_against_rtl,
 )
 
 OPTIMIZER_ANALYSIS_PROMPT = """You are a senior RTL verification engineer specializing in code quality, readability, and optimization.
 
 Analyze the following SystemVerilog module for code quality issues ONLY.
-Do NOT report bugs or timing issues - only optimization and style concerns.
+Do NOT report bugs, functional issues, or timing issues.
+Focus only on optimization, maintainability, readability, and coding style.
 
 CRITICAL RULES FOR GENERALIZED DESIGN OPTIMIZATION:
-1. DECLARED ENTITIES ONLY: First, inspect the RTL code and identify the exact names of all declared signals, registers, ports, and parameters. Any optimization, refactoring, or renaming suggestions you report MUST strictly refer only to these declared signals and parameters.
-2. DO NOT INVENT LOGIC: Do not suggest optimizing code, clocks, resets, parameters, or structures that are not explicitly present in the provided file.
-3. STYLE AND PPA FOCUS: Suggestions should focus on improving readability, parameterizing hardcoded values, or simplifying redundant logic paths.
-4. If no optimizations are suggested, you MUST return: {{"declared_signals_and_parameters": [], "optimizations": [], "total_optimizations": 0, "quality_score": "HIGH"}}.
 
-Check specifically for:
-1. HARDCODED VALUES: Numbers that should be parameters
-2. NAMING: Poor signal or module names that reduce readability
-3. REDUNDANT LOGIC: Logic that can be simplified or removed
-4. MISSING COMMENTS: Complex logic blocks without explanation
-5. STYLE: Inconsistent formatting or coding style violations
+1. DECLARED ENTITIES ONLY:
+First inspect the RTL and identify the exact names of all declared ports, signals, registers, wires, and parameters.
+Every optimization MUST refer only to these declared identifiers.
 
-RTL Code to analyze (File: {filename}):
-```systemverilog
-{code}
-```
+2. DO NOT INVENT LOGIC:
+Do not assume missing functionality.
+Do not invent clocks, resets, parameters, signals, states, loops, protocols, or architectural intent that is not explicitly present.
 
-You MUST respond in a VALID JSON format matching the following JSON schema. Do not add any text outside the JSON.
+3. REASON BEFORE SUGGESTING:
+Evaluate whether the RTL actually contains optimization opportunities.
 
-JSON Schema:
-{{
-  "declared_signals_and_parameters": [
-    "exact names of all signals, registers, ports, and parameters in the module"
-  ],
-  "optimizations": [
-    {{
-      "type": "HARDCODED" | "NAMING" | "REDUNDANT" | "COMMENT" | "STYLE",
-      "location": "exact line number or block name",
-      "issue": "Clear description of what can be improved (2 sentences max)",
-      "benefit": "Why this improvement matters (1 sentence max)",
-      "suggestion": "Exact improved code or description of change"
-    }}
-  ],
-  "total_optimizations": 0,
-  "quality_score": "HIGH" | "MEDIUM" | "LOW"
-}}
+Only report an optimization if it provides a clear improvement in one of the following:
 
-If no optimizations are suggested, return:
+• Readability
+• Maintainability
+• Parameterization
+• Removal of redundant logic
+• Coding style consistency
+
+If the implementation is already clean, parameterized, readable, and efficient, return
+
 {{
   "declared_signals_and_parameters": [],
   "optimizations": [],
   "total_optimizations": 0,
   "quality_score": "HIGH"
 }}
+
+Never invent optimization suggestions simply to produce output.
+
+Evaluate ONLY whether any of the following actually exist:
+
+• HARDCODED VALUES
+• NAMING ISSUES
+• REDUNDANT LOGIC
+• MISSING COMMENTS
+• STYLE INCONSISTENCIES
+
+If none of these are present, return an empty optimization list.
+
+RTL Code to analyze (File: {filename}):
+
+```systemverilog
+{code}
 """
 
 
@@ -68,9 +69,7 @@ class OptimizerAgent(BaseAgent):
     Tier 1: rtl_parser static analysis (pyslang-backed).
     Tier 2: Ollama LLM fallback when static analysis finds nothing.
 
-    FIX: the Ollama fallback path was previously unreachable dead code because
-    an unconditional early return fired whenever static_opts was empty.
-    That return has been removed so Ollama is now actually called.
+   
     """
 
     def __init__(self, model: str = None):
@@ -108,10 +107,22 @@ class OptimizerAgent(BaseAgent):
                 "elapsed_s":          0.0,
             }
 
-        # ── No static findings — fall through to Ollama ──────────────────────
-        # (Previously this path was dead code: an unconditional return above
-        #  prevented the prompt from ever being built or Ollama being called.)
-        prompt = OPTIMIZER_ANALYSIS_PROMPT.format(filename=path.name, code=code)
+      
+
+        from src.core.semantic_chunker import chunk_sv, select_relevant_chunks, chunks_to_prompt_text
+
+        # Semantic chunking to focus optimization checks on relevant RTL regions.
+        chunks = chunk_sv(code)
+        selected = select_relevant_chunks(
+            chunks,
+            query=OPTIMIZER_ANALYSIS_PROMPT,
+            top_k=12,
+            max_total_chars=9000,
+        )
+        code_ctx = chunks_to_prompt_text(selected) if selected else code
+
+        prompt = OPTIMIZER_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx)
+
         result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
         if not result["success"]:
             return {"success": False, "error": result["error"]}
@@ -136,8 +147,9 @@ class OptimizerAgent(BaseAgent):
         )
         optimizations = [
             opt for opt in optimizations
-            if references_only_declared(opt, declared) and is_concrete_finding(opt, declared)
+            if validate_optimization_against_rtl(code, opt)
         ]
+
         total_optimizations = len(optimizations)
         quality_score       = "HIGH" if not optimizations else quality_score
         raw_response        = self._format_markdown_response(optimizations, total_optimizations, quality_score)

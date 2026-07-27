@@ -92,7 +92,9 @@ def save_combined_report(filename, bug_result, timing_result,
 
 def run_all_agents(rtl_folder="rtl_files",
                    output_folder="reports",
-                   model="qwen2.5:3b"):
+                   model="llama3.2:latest",
+                   grounded: bool = False):
+
     """
     Main function. Runs all 4 agents sequentially on every .sv file.
     """
@@ -202,10 +204,13 @@ if __name__ == "__main__":
     parser.add_argument("--rtl-folder", default="rtl_files", help="Folder containing .sv files")
     parser.add_argument("--output-folder", default="reports", help="Folder for generated reports")
     parser.add_argument("--model", default="qwen2.5:3b", help="Ollama model name")
+    parser.add_argument("--grounded", action="store_true", default=False, help="Enable grounded anti-hallucination wrapper")
     args = parser.parse_args()
+
 
     run_all_agents(
         rtl_folder=args.rtl_folder,
         output_folder=args.output_folder,
-        model=args.model
+        model=args.model,
+        grounded=args.grounded
     )

@@ -222,3 +222,24 @@ The project is successful when:
 - the system still works when Ollama is slow, unavailable, or returns invalid JSON
 - users can run analysis from both CLI and web dashboard
 - generated fixes are narrow, readable, and synthesizable
+
+## Understanding
+Your project currently has two layers:
+
+1. Deterministic static analysis
+This is reliable for things like:
+
+output declared but never assigned
+latch inference from missing default/else
+blocking assignment inside sequential logic
+simple width mismatch
+multiple drivers
+missing reset assignment in clear cases
+This is not semantic intelligence; it is rule-based RTL structure analysis. That is good because it avoids hallucinations.
+
+2. LLM agent reasoning
+This gives higher-level explanations, SVA suggestions, optimization ideas, and custom answers. But the LLM can still be slow or hallucinate, so your project filters responses using declared-signal checks.
+
+So the honest final-project claim should be:
+
+The framework combines deterministic RTL static checks with local LLM-based specialized agents. Static analysis handles evidence-backed structural bugs, while LLM agents provide contextual explanations, assertion suggestions, optimization guidance, and repair support. The system is general-purpose for RTL files placed in rtl_files/, but deeper architectural intent still requires user review or future semantic enhancement.

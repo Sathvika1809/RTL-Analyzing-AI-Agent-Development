@@ -77,3 +77,88 @@
 {"timestamp": "2026-06-30T14:48:11.033247", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
 {"timestamp": "2026-06-30T14:54:40.864196", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 0, "severity": "LOW", "response_length": 512}
 {"timestamp": "2026-06-30T14:55:12.200585", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 0, "severity": "LOW", "response_length": 512}
+{"timestamp": "2026-07-05T23:37:33.161003", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-05T23:37:41.366205", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-05T23:37:49.563154", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-05T23:37:49.585641", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-05T23:39:00.814017", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-05T23:41:59.906190", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 900}
+{"timestamp": "2026-07-05T23:45:09.046515", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-05T23:48:34.588487", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T16:14:35.816293", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T17:34:36.292060", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T17:35:29.304444", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T17:36:01.520431", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T17:37:57.711349", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 705}
+{"timestamp": "2026-07-11T17:38:46.240833", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T17:40:37.340127", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T17:40:55.950914", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 752}
+{"timestamp": "2026-07-11T17:47:25.923758", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T17:51:00.063297", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T17:54:03.118080", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T17:58:35.974694", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T17:59:34.380272", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T18:07:02.942681", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T18:11:08.302593", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T18:11:50.808602", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T18:14:07.900754", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T18:16:10.425127", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T18:18:15.032505", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T18:19:03.255846", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T18:19:42.608935", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T18:23:17.174734", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T18:24:44.679288", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T19:45:36.172989", "agent": "bug_agent", "model": "llama3.2", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T19:48:48.374917", "agent": "bug_agent", "model": "llama3.2", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 966}
+{"timestamp": "2026-07-11T19:51:24.422582", "agent": "bug_agent", "model": "llama3.2", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T19:56:25.739782", "agent": "bug_agent", "model": "llama3.2", "filename": "dma_fifo_deadlock.sv", "bugs_found": 0, "severity": "LOW", "response_length": 2110}
+{"timestamp": "2026-07-11T20:00:56.671478", "agent": "bug_agent", "model": "llama3.2", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T20:01:43.615155", "agent": "bug_agent", "model": "llama3.2", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T20:05:27.909587", "agent": "bug_agent", "model": "llama3.2", "filename": "round_robin_arbiter.sv", "bugs_found": 3, "severity": "CRITICAL", "response_length": 1384}
+{"timestamp": "2026-07-11T20:12:44.764500", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T21:51:17.947361", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T21:55:33.285358", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "dma_fifo_deadlock.sv", "bugs_found": 0, "severity": "LOW", "response_length": 1536}
+{"timestamp": "2026-07-11T22:01:20.270429", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T22:02:15.355582", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T22:06:36.176458", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 0, "severity": "LOW", "response_length": 679}
+{"timestamp": "2026-07-11T22:24:57.326923", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T22:25:30.509627", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T22:26:01.898671", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T22:28:55.421816", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T22:29:39.921348", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-11T22:29:53.398948", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 758}
+{"timestamp": "2026-07-11T22:30:50.324206", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 760}
+{"timestamp": "2026-07-11T22:31:48.354954", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 765}
+{"timestamp": "2026-07-11T22:39:57.547913", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T22:40:34.863989", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T22:41:10.755540", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T22:46:34.400870", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T22:47:03.216131", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-11T22:59:24.039466", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T23:00:33.616624", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T23:00:41.478444", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T23:03:35.240793", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T23:03:58.354911", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T23:04:22.797038", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T23:05:11.990756", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T23:05:19.152769", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-11T23:10:14.124398", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T23:10:21.216641", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-11T23:12:37.389740", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 0, "severity": "LOW", "response_length": 695}
+{"timestamp": "2026-07-11T23:13:17.811646", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 1, "severity": "HIGH", "response_length": 690}
+{"timestamp": "2026-07-11T23:19:15.455277", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 0, "severity": "LOW", "response_length": 690}
+{"timestamp": "2026-07-11T23:19:49.786691", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 0, "severity": "LOW", "response_length": 659}
+{"timestamp": "2026-07-15T12:50:23.213489", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-15T12:50:39.534217", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-15T12:50:55.902326", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-15T12:51:00.002205", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-15T13:00:58.598003", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-15T13:04:40.973608", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "cdc_pointer_sync.sv", "bugs_found": 0, "severity": "LOW", "response_length": 758}
+{"timestamp": "2026-07-15T13:08:06.172865", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}
+{"timestamp": "2026-07-15T13:12:45.229058", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "dma_fifo_deadlock.sv", "bugs_found": 0, "severity": "LOW", "response_length": 1548}
+{"timestamp": "2026-07-15T13:20:14.936091", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fifo.sv", "bugs_found": 3, "severity": "MEDIUM", "response_length": 908, "source": "static"}
+{"timestamp": "2026-07-15T13:21:13.576564", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "fsm.sv", "bugs_found": 4, "severity": "HIGH", "response_length": 1240, "source": "static"}
+{"timestamp": "2026-07-15T13:26:04.746306", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "round_robin_arbiter.sv", "bugs_found": 0, "severity": "LOW", "response_length": 913}
+{"timestamp": "2026-07-15T13:26:25.866966", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-15T13:32:17.427383", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "alu.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 953, "source": "static"}
+{"timestamp": "2026-07-15T13:47:48.977514", "agent": "bug_agent", "model": "qwen2.5:3b", "filename": "counter.sv", "bugs_found": 3, "severity": "HIGH", "response_length": 894, "source": "static"}

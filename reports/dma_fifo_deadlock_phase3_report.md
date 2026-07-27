@@ -1,37 +1,29 @@
 # Phase 3 RTL Analysis Report: dma_fifo_deadlock.sv
 
-**Generated:** 2026-06-30 14:43:08
+**Generated:** 2026-07-15 13:20:14
 
 ---
 
 ## Bug Analysis
 
-**Total bugs found:** 1
+**Total bugs found:** 0
 **Severity:** LOW
-**Time taken:** 274.5s
+**Time taken:** 214.5s
 
-BUG #1
-Type: RESET
-Location: always_ff @posedge clk or negedge rst_n
-Problem: Reset signal 'rst_n' is not used in any flip-flop. It should be checked if it matches the actual reset signal.
-Impact: No impact on functionality as no flip-flops are affected by reset.
-Fix: Remove the always_ff block and keep only the logic inside.
+NO BUGS DETECTED
 
-TOTAL BUGS: 1
+TOTAL BUGS: 0
 SEVERITY: LOW
+
 
 ---
 
 ## Timing Analysis
 
-**Total issues found:** 0
-**Risk level:** LOW
-**Time taken:** 275.3s
-
-NO TIMING ISSUES DETECTED
-
-TOTAL TIMING ISSUES: 0
-RISK LEVEL: LOW
+Error: Ollama read timed out after 300s. The server accepted the request but did not finish generating a response in time.
+Ollama URL: http://localhost:11434
+Model: qwen2.5:3b
+Checks: make sure `ollama serve` is running, the selected model is pulled, and the model can finish this prompt on your machine. If the model is just slow, increase config/settings.json `timeout` or use a smaller model.
 
 
 ---
@@ -40,7 +32,7 @@ RISK LEVEL: LOW
 
 **Total assertions generated:** 2
 **Coverage level:** MEDIUM
-**Time taken:** 0.009024099999805912s
+**Time taken:** 0.008431399939581752s
 
 ASSERTION #1
 Type: RESET
@@ -63,10 +55,14 @@ COVERAGE LEVEL: MEDIUM
 
 ## Code Optimization Suggestions
 
-Error: Ollama read timed out after 300s. The server accepted the request but did not finish generating a response in time.
-Ollama URL: http://localhost:11434
-Model: qwen2.5:3b
-Checks: make sure `ollama serve` is running, the selected model is pulled, and the model can finish this prompt on your machine. If the model is just slow, increase config/settings.json `timeout` or use a smaller model.
+**Total suggestions:** 0
+**Code quality:** HIGH
+**Time taken:** 125.5s
+
+NO OPTIMIZATIONS SUGGESTED
+
+TOTAL OPTIMIZATIONS: 0
+QUALITY SCORE: HIGH
 
 
 ---

@@ -1,6 +1,6 @@
 # Phase 3 RTL Analysis Report: fifo.sv
 
-**Generated:** 2026-06-30 14:48:11
+**Generated:** 2026-07-15 13:21:13
 
 ---
 
@@ -58,7 +58,7 @@ RISK LEVEL: MEDIUM
 
 **Total assertions generated:** 2
 **Coverage level:** MEDIUM
-**Time taken:** 0.007183700014138594s
+**Time taken:** 0.0018118999432772398s
 
 ASSERTION #1
 Type: RESET
@@ -81,10 +81,14 @@ COVERAGE LEVEL: MEDIUM
 
 ## Code Optimization Suggestions
 
-Error: Ollama read timed out after 300s. The server accepted the request but did not finish generating a response in time.
-Ollama URL: http://localhost:11434
-Model: qwen2.5:3b
-Checks: make sure `ollama serve` is running, the selected model is pulled, and the model can finish this prompt on your machine. If the model is just slow, increase config/settings.json `timeout` or use a smaller model.
+**Total suggestions:** 0
+**Code quality:** HIGH
+**Time taken:** 58.6s
+
+NO OPTIMIZATIONS SUGGESTED
+
+TOTAL OPTIMIZATIONS: 0
+QUALITY SCORE: HIGH
 
 
 ---

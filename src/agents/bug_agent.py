@@ -125,8 +125,28 @@ class BugAgent(BaseAgent):
                 "elapsed_s":  0.0,
             }
 
-        prompt = BUG_ANALYSIS_PROMPT.format(filename=path.name, code=code)
+        from src.core.semantic_chunker import (
+            chunk_sv,
+            select_relevant_chunks,
+            chunks_to_prompt_text,
+        )
+
+        # Semantic chunking: reduce prompt to the most relevant RTL regions.
+
+        # This also helps the existing anti-hallucination filters by focusing
+        # the model on the right semantic units.
+        chunks = chunk_sv(code)
+        selected = select_relevant_chunks(
+            chunks,
+            query=BUG_ANALYSIS_PROMPT,
+            top_k=12,
+            max_total_chars=9000,
+        )
+        code_ctx = chunks_to_prompt_text(selected) if selected else code
+
+        prompt = BUG_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx)
         result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
+
         if not result["success"]:
             return {"success": False, "error": result["error"]}
 

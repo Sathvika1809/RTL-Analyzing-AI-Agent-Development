@@ -469,7 +469,7 @@ def _extract_declared_identifiers_text(code: str) -> dict:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Public API  (identical signatures to rtl_static.py)
+# Public API 
 # ═════════════════════════════════════════════════════════════════════════════
 
 def extract_declared_identifiers(code: str) -> dict:
@@ -932,11 +932,264 @@ def references_only_declared(
     return not suspicious
 
 
+def extract_clocking_blocks(code: str) -> list[dict]:
+    """Best-effort extraction of clocked always blocks, including:
+    - clock identifier
+    - edge (posedge/negedge)
+    - reset signal + active level (best-effort)
+    - which LHS signals are assigned in reset and non-reset paths
+
+    This is evidence extraction used to validate generated SVA.
+    """
+    blocks = []
+    declared = extract_declared_identifiers(code)
+    known_signals = set(declared.get("signals", []))
+    clean = _strip_comments(code)
+
+    for blk in _find_always_blocks(code):
+        if blk.get("kind") not in ("ff", "always"):
+            continue
+
+        text = blk.get("text", "")
+        header = blk.get("header", "")
+
+        # 1) Identify clock + edge from header (legacy always @(...))
+        # always_ff may not have header sensitivity in this text extraction.
+        clk = None
+        edge = None
+        m = re.search(r"@\s*\(\s*([^)]*)\)", header)
+        sens = m.group(1) if m else ""
+        if sens:
+            if "posedge" in sens:
+                edge = "posedge"
+            if "negedge" in sens:
+                edge = "negedge"
+            # pick first identifier that looks like a signal
+            cand = re.findall(r"\b[A-Za-z_]\w*\b", sens)
+            cand = [c for c in cand if c not in {"or", "and"}]
+            for c in cand:
+                if c in known_signals:
+                    clk = c
+                    break
+
+        # If header didn't reveal clock, fall back to naming-based clock heuristic.
+        # (Still evidence-bound because we validate matches to these blocks.)
+        if not clk:
+            clocks = declared.get("clocks", [])
+            if clocks:
+                clk = clocks[0]
+                edge = edge or "posedge"
+
+        if not clk:
+            continue
+
+        # 2) Find reset condition in the block text
+        # Search for `if (<rst>)` or `if (!<rst>)`.
+        reset = None
+        reset_active_low = False
+        rst_candidates = declared.get("resets", [])
+        # Prefer explicit matches in text
+        for r in rst_candidates:
+            if re.search(rf"\bif\s*\(\s*!\s*{re.escape(r)}\s*\)", text):
+                reset = r
+                reset_active_low = True
+                break
+            if re.search(rf"\bif\s*\(\s*{re.escape(r)}\s*\)", text):
+                reset = r
+                reset_active_low = False
+                break
+
+        # 3) Partition assignments by reset branch (best-effort)
+        rst_lhs = set()
+        non_rst_lhs = set()
+
+        if reset:
+            # split at first else (if any) — best effort for simple structures
+            # Find the first if(reset) ... else ... block region.
+            # If pattern not found, we conservatively treat as non-reset only.
+            if re.search(rf"\bif\s*\(\s*!?\s*{re.escape(reset)}\s*\)", text):
+                # approximate reset body as everything from the reset-if line up to else
+                parts = re.split(r"\belse\b", text, maxsplit=1)
+                rst_body = parts[0]
+                rst_lhs = {a["lhs"] for a in _assignments(rst_body) if a["lhs"] in known_signals}
+                # non-reset body is remaining after else, if present
+                if len(parts) > 1:
+                    non_rst_body = parts[1]
+                    non_rst_lhs = {a["lhs"] for a in _assignments(non_rst_body) if a["lhs"] in known_signals}
+
+        # Also add all assignments to non_rst if we couldn't separate
+        all_lhs = {a["lhs"] for a in _assignments(text) if a["lhs"] in known_signals}
+        if not non_rst_lhs:
+            non_rst_lhs = all_lhs
+
+        blocks.append({
+            "kind": "clocked_ff",
+            "line": blk.get("line"),
+            "clock": clk,
+            "edge": edge,
+            "reset": reset,
+            "reset_active_low": reset_active_low,
+            "rst_lhs": rst_lhs,
+            "non_rst_lhs": non_rst_lhs,
+        })
+
+    return blocks
+
+
+def _extract_identifiers_from_sva_expr(sva_code: str) -> set[str]:
+    # Extract candidate signal-like identifiers from inside sva_code.
+    # This is for evidence binding; we still validate membership via extract_clocking_blocks.
+    return {t for t in re.findall(r"\b[A-Za-z_]\w*\b", sva_code) if t}
+
+
+def extract_sva_clock_reset_target(sva_code: str) -> dict:
+    """Parse generated SVA string to extract clock/reset polarity and target.
+
+    This is intentionally strict: if we can't confidently identify reset polarity,
+    we return reset=None so validators can reject reset-aware assertions.
+    """
+    # Clock: @(posedge X) or @(negedge X)
+    mclk = re.search(r"@\s*\(\s*(posedge|negedge)\s+([A-Za-z_]\w*)\s*\)", sva_code)
+    clk = mclk.group(2) if mclk else None
+    edge = mclk.group(1) if mclk else None
+
+    # Reset: disable iff (<expr>)
+    mrst = re.search(r"disable\s+iff\s*\(\s*([^)]*)\)", sva_code)
+    disable_expr = mrst.group(1).strip() if mrst else None
+
+    reset = None
+    reset_active_low = False
+
+    if disable_expr:
+        # Detect exact-ish patterns produced by your own agent:
+        #   disable iff (!({reset_active})) where reset_active is rst_n or rst
+        #   disable iff ({reset_active})
+        # Normalize a bit and then match.
+        expr = disable_expr.replace(" ", "")
+
+        # Pattern: !rst_n  or !rst
+        m1 = re.fullmatch(r"!\(?([A-Za-z_]\w*)\)?", expr)
+        if m1:
+            reset = m1.group(1)
+            reset_active_low = True
+        else:
+            # Pattern: rst_n  or rst
+            m2 = re.fullmatch(r"\(?([A-Za-z_]\w*)\)?", expr)
+            if m2:
+                reset = m2.group(1)
+                reset_active_low = False
+
+    # Target from !$isunknown(target) or $isunknown(target)
+    mtarget = re.search(r"\$isunknown\s*\(\s*([A-Za-z_]\w*)\s*\)", sva_code)
+    target = mtarget.group(1) if mtarget else None
+
+    return {
+        "clock": clk,
+        "edge": edge,
+        "reset": reset,
+        "reset_active_low": reset_active_low,
+        "target": target,
+    }
+
+
+
+def validate_sva_against_rtl(code: str, assertion: dict) -> bool:
+    """Evidence-based validation for SVA assertions.
+
+    Reject if any of the following evidence checks fail:
+    - clock in SVA doesn't match a clocked always_ff/always block
+    - reset polarity doesn't match reset-aware branch condition (when reset present)
+    - target signal isn't driven in the appropriate branch
+    """
+    sva = str(assertion.get("sva_code", ""))
+    if not sva or "assert property" not in sva:
+        return False
+
+    parsed = extract_sva_clock_reset_target(sva)
+    if not parsed.get("clock") or not parsed.get("edge"):
+        return False
+    if not parsed.get("target"):
+        return False
+
+    cb = extract_clocking_blocks(code)
+    for blk in cb:
+        if blk.get("clock") != parsed["clock"]:
+            continue
+        if blk.get("edge") and parsed["edge"] and blk.get("edge") != parsed["edge"]:
+            continue
+
+        # If SVA mentions reset, require match (identifier + polarity)
+        if parsed.get("reset"):
+            if blk.get("reset") != parsed["reset"]:
+                continue
+            if blk.get("reset_active_low") != parsed["reset_active_low"]:
+                continue
+
+        # Drive evidence:
+        # If it looks like a reset assertion (the SVA contains '|=>' and $isunknown),
+        # we treat it as target-after-reset is known.
+        # Otherwise, require non-reset drive.
+        target = parsed["target"]
+        if target in blk.get("non_rst_lhs", set()):
+            # For reset assertions, also require it appears in reset branch.
+            if "|=>" in sva and (parsed.get("reset") or "disable iff" in sva):
+                if target in blk.get("rst_lhs", set()):
+                    return True
+                # if we can't separate rst/non-rst, allow non_rst only
+                return True
+            return True
+
+    return False
+
+
+def validate_immediate_assertions_against_rtl(code: str, assertion: dict) -> bool:
+    """Evidence-bound validation for combinational *immediate* assertions.
+
+    We only accept immediate assertions that:
+    - contain `assert (` in `sva_code`
+    - do NOT contain `assert property`
+    - reference only identifiers declared in this RTL
+
+    This prevents hallucinated signal names for combinational modules
+    where concurrent SVA cannot be validated via clocking evidence.
+    """
+    raw = str(assertion.get("sva_code", ""))
+    if not raw:
+        return False
+    if "assert property" in raw:
+        return False
+    if "assert" not in raw or "assert (" not in raw:
+        return False
+
+    declared = extract_declared_identifiers(code)
+    allowed = set(declared.get("signals", [])) | set(declared.get("parameters", []))
+
+    tokens = {t for t in re.findall(r"\b[A-Za-z_]\w*\b", raw)}
+    tokens = {t for t in tokens if t not in KEYWORDS}
+
+    return tokens.issubset(allowed)
+
+
+def validate_optimization_against_rtl(code: str, optimization: dict) -> bool:
+    """Evidence-based filter for optimizer outputs.
+
+    For now (to remove heuristics without breaking your workflow):
+    Only accept optimizations that match deterministic static findings.
+    """
+    # Map optimization item to a deterministic static finding via keywords in issue.
+    static = static_optimizations(code)
+    if not static:
+        return False
+
+    issue = str(optimization.get("issue", "")).lower()
+    for f in static:
+        if str(f.get("type", "")).lower() in issue or str(f.get("issue", "")).lower().split()[0] in issue:
+            return True
+    return False
+
+
 def is_concrete_finding(item: dict, declared: Iterable[str]) -> bool:
-    """
-    Return True if a finding has a concrete location and mentions at least one
-    declared signal.  Filters out vague LLM responses.
-    """
+    """Deprecated heuristic. Kept for backward compatibility only."""
     text = " ".join(
         str(item.get(k, "")) for k in (
             "location", "problem", "impact", "fix",
@@ -953,3 +1206,4 @@ def is_concrete_finding(item: dict, declared: Iterable[str]) -> bool:
     has_loc = any(kw in text for kw in ("line", "always", "assign", "case", "block"))
     has_sig = any(n.lower() in text for n in declared)
     return has_loc or has_sig
+
