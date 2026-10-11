@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from src.core.base_agent import BaseAgent
-from src.core.rtl_parser import (          # ← was rtl_static
+from src.core.rtl_parser import (
     extract_declared_identifiers,
     is_concrete_finding,
     references_only_declared,
@@ -76,12 +76,26 @@ If no provable issues exist:
 }}
 """
 
+# Files at or below this size get the FULL module passed to the LLM with no
+# chunking, so it retains cross-block context (e.g. clock-domain signals
+# used in one always block but declared/driven near another).
+SMALL_FILE_CHAR_THRESHOLD = 6000
+
 
 class TimingAgent(BaseAgent):
     """
     Specialized agent for identifying timing hazards, CDC, and blocking assignments.
-    Tier 1: rtl_parser static analysis (pyslang-backed).
-    Tier 2: Ollama LLM fallback when static analysis finds nothing.
+
+    Both tiers now ALWAYS run and their findings are merged:
+      Tier 1: rtl_parser static analysis (pyslang-backed) - deterministic,
+              catches BLOCKING/LATCH/SENSITIVITY issues.
+      Tier 2: Ollama LLM - the only tier that can reasonably flag CDC issues
+              (cross-domain signal reasoning) and COMBO_PATH, which static
+              rules don't attempt.
+
+    Previously tier 2 was skipped entirely whenever tier 1 found anything,
+    which meant a file with even one static BLOCKING hit would never get
+    checked for CDC issues at all.
     """
 
     def __init__(self, model: str = None):
@@ -95,61 +109,79 @@ class TimingAgent(BaseAgent):
         code = path.read_text(encoding="utf-8", errors="replace")
         print(f"  Timing agent analyzing: {path.name}")
 
+        # ---- Tier 1: static analysis (always runs) ----
         static_issues = static_timing_findings(code)
-        if static_issues:
-            total_issues = len(static_issues)
-            risk         = "MEDIUM"
-            raw_response = self._format_markdown_response(static_issues, total_issues, risk)
-            self.log_run(path.name, {
-                "issues_found":    total_issues,
-                "severity":        risk,
-                "response_length": len(raw_response),
-                "source":          "static",
-            })
-            return {
-                "success":       True,
-                "filename":      path.name,
-                "filepath":      str(path),
-                "timestamp":     datetime.now().isoformat(),
-                "model":         self.model,
-                "timing_issues": static_issues,
-                "total_issues":  total_issues,
-                "risk":          risk,
-                "raw_response":  raw_response,
-                "elapsed_s":     0.0,
-            }
+        for i in static_issues:
+            i["source"] = "static"
 
-        from src.core.semantic_chunker import chunk_sv, select_relevant_chunks, chunks_to_prompt_text
+        # ---- Tier 2: LLM analysis (always runs) ----
+        llm_issues, llm_error, llm_elapsed = self._run_llm_analysis(code, path)
 
-        # Semantic chunking to reduce hallucinations and focus timing checks.
-        chunks = chunk_sv(code)
-        selected = select_relevant_chunks(
-            chunks,
-            query=TIMING_ANALYSIS_PROMPT,
-            top_k=12,
-            max_total_chars=9000,
-        )
-        code_ctx = chunks_to_prompt_text(selected) if selected else code
+        if llm_error and not static_issues:
+            return {"success": False, "error": llm_error}
+
+        # ---- Merge + dedupe ----
+        merged_issues = self._merge_and_dedupe(static_issues, llm_issues)
+        total_issues = len(merged_issues)
+        risk = self._compute_risk(merged_issues)
+        raw_response = self._format_markdown_response(merged_issues, total_issues, risk)
+
+        self.log_run(path.name, {
+            "issues_found": total_issues,
+            "severity": risk,
+            "static_count": len(static_issues),
+            "llm_count": len(llm_issues),
+            "response_length": len(raw_response),
+            "source": "merged",
+        })
+
+        return {
+            "success": True,
+            "filename": path.name,
+            "filepath": str(path),
+            "timestamp": datetime.now().isoformat(),
+            "model": self.model,
+            "timing_issues": merged_issues,
+            "total_issues": total_issues,
+            "risk": risk,
+            "raw_response": raw_response,
+            "elapsed_s": llm_elapsed,
+        }
+
+    def _run_llm_analysis(self, code: str, path: Path):
+        """Runs the LLM tier and returns (issues, error, elapsed).
+
+        On any failure, returns ([], error_message, 0.0) so the caller can
+        still fall back to static-only results instead of failing outright.
+        """
+        if len(code) <= SMALL_FILE_CHAR_THRESHOLD:
+            code_ctx = code
+        else:
+            from src.core.semantic_chunker import chunk_sv, select_relevant_chunks, chunks_to_prompt_text
+            chunks = chunk_sv(code)
+            selected = select_relevant_chunks(
+                chunks,
+                query=TIMING_ANALYSIS_PROMPT,
+                top_k=12,
+                max_total_chars=9000,
+            )
+            code_ctx = chunks_to_prompt_text(selected) if selected else code
 
         prompt = TIMING_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx)
-
         result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
+
         if not result["success"]:
-            return {"success": False, "error": result["error"]}
+            return [], result["error"], 0.0
 
         parsed_json = self.parse_json_response(result["response"])
         parse_error = self.json_parse_error(parsed_json)
         if parse_error:
-            return {"success": False, "error": parse_error}
+            return [], parse_error, result.get("elapsed", 0.0)
 
         if isinstance(parsed_json, list):
-            issues       = parsed_json
-            total_issues = len(issues)
-            risk         = "MEDIUM" if issues else "LOW"
+            issues = parsed_json
         else:
-            issues       = parsed_json.get("timing_issues", []) if isinstance(parsed_json, dict) else []
-            total_issues = parsed_json.get("total_issues", len(issues)) if isinstance(parsed_json, dict) else len(issues)
-            risk         = parsed_json.get("risk", "LOW" if not issues else "MEDIUM") if isinstance(parsed_json, dict) else ("LOW" if not issues else "MEDIUM")
+            issues = parsed_json.get("timing_issues", []) if isinstance(parsed_json, dict) else []
 
         declared = (
             set(extract_declared_identifiers(code)["signals"])
@@ -159,35 +191,41 @@ class TimingAgent(BaseAgent):
             issue for issue in issues
             if references_only_declared(issue, declared) and is_concrete_finding(issue, declared)
         ]
-        total_issues = len(issues)
-        risk         = "LOW" if not issues else risk
-        raw_response = self._format_markdown_response(issues, total_issues, risk)
+        for i in issues:
+            i["source"] = "llm"
 
-        self.log_run(path.name, {
-            "issues_found":    total_issues,
-            "severity":        risk,
-            "response_length": len(result["response"]),
-        })
+        return issues, None, result.get("elapsed", 0.0)
 
-        return {
-            "success":       True,
-            "filename":      path.name,
-            "filepath":      str(path),
-            "timestamp":     datetime.now().isoformat(),
-            "model":         self.model,
-            "timing_issues": issues,
-            "total_issues":  total_issues,
-            "risk":          risk,
-            "raw_response":  raw_response,
-            "elapsed_s":     result["elapsed"],
-        }
+    def _merge_and_dedupe(self, static_issues: list, llm_issues: list) -> list:
+        """Merge both tiers, dropping LLM findings that duplicate a static
+        finding on the same type + location (static wins on conflicts).
+        """
+        def key(i):
+            loc = str(i.get("location", "")).lower()
+            first_tok = loc.split()[0] if loc.split() else loc
+            return (str(i.get("type", "")).upper(), first_tok)
+
+        seen = {key(i) for i in static_issues}
+        merged = list(static_issues)
+        for i in llm_issues:
+            if key(i) not in seen:
+                merged.append(i)
+                seen.add(key(i))
+        return merged
+
+    def _compute_risk(self, issues: list) -> str:
+        if not issues:
+            return "LOW"
+        if any(i.get("type") in {"CDC", "BLOCKING"} for i in issues):
+            return "HIGH"
+        return "MEDIUM"
 
     def _format_markdown_response(self, issues: list, total_issues: int, risk: str) -> str:
         if not issues:
             return "NO TIMING ISSUES DETECTED\n\nTOTAL TIMING ISSUES: 0\nRISK LEVEL: LOW\n"
         md = []
         for i, issue in enumerate(issues, 1):
-            md.append(f"TIMING ISSUE #{i}")
+            md.append(f"TIMING ISSUE #{i} [{issue.get('source', 'unknown')}]")
             md.append(f"Type: {issue.get('type', 'UNKNOWN')}")
             md.append(f"Location: {issue.get('location', 'UNKNOWN')}")
             md.append(f"Problem: {issue.get('problem', '')}")

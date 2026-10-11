@@ -1,30 +1,31 @@
 # Phase 3 RTL Analysis Report: counter.sv
 
-**Generated:** 2026-07-15 13:51:54
+**Generated:** 2026-08-08 20:52:03
 
 ---
 
 ## Bug Analysis
 
 **Total bugs found:** 3
+**Source breakdown:** 3 static / 0 llm
 **Severity:** HIGH
 **Time taken:** 0.0s
 
-BUG #1
+BUG #1 [static]
 Type: FUNCTIONAL
 Location: count at line 14
 Problem: Blocking assignment (=) used inside always_ff sequential block.
 Impact: Can cause simulation/synthesis mismatch; flip-flop behaviour is undefined.
 Fix: Replace '=' with '<=' for count in this always_ff block.
 
-BUG #2
+BUG #2 [static]
 Type: FUNCTIONAL
 Location: count at line 16
 Problem: Blocking assignment (=) used inside always_ff sequential block.
 Impact: Can cause simulation/synthesis mismatch; flip-flop behaviour is undefined.
 Fix: Replace '=' with '<=' for count in this always_ff block.
 
-BUG #3
+BUG #3 [static]
 Type: LATCH
 Location: carry_out in combinational block at line 21
 Problem: carry_out is assigned under conditional logic with no complete else or default.
@@ -39,24 +40,25 @@ SEVERITY: HIGH
 ## Timing Analysis
 
 **Total issues found:** 3
-**Risk level:** MEDIUM
+**Source breakdown:** 3 static / 0 llm
+**Risk level:** HIGH
 **Time taken:** 0.0s
 
-TIMING ISSUE #1
+TIMING ISSUE #1 [static]
 Type: BLOCKING
 Location: count at line 14
 Problem: Blocking assignment (=) used inside always_ff sequential block.
 Risk: Can produce timing-dependent simulation mismatch or inferred latch storage.
 Fix: Replace '=' with '<=' for count in this always_ff block.
 
-TIMING ISSUE #2
+TIMING ISSUE #2 [static]
 Type: BLOCKING
 Location: count at line 16
 Problem: Blocking assignment (=) used inside always_ff sequential block.
 Risk: Can produce timing-dependent simulation mismatch or inferred latch storage.
 Fix: Replace '=' with '<=' for count in this always_ff block.
 
-TIMING ISSUE #3
+TIMING ISSUE #3 [static]
 Type: LATCH
 Location: carry_out in combinational block at line 21
 Problem: carry_out is assigned under conditional logic with no complete else or default.
@@ -64,24 +66,25 @@ Risk: Can produce timing-dependent simulation mismatch or inferred latch storage
 Fix: Add a default assignment for carry_out before the conditional, or add else/default.
 
 TOTAL TIMING ISSUES: 3
-RISK LEVEL: MEDIUM
+RISK LEVEL: HIGH
 
 ---
 
 ## Generated SVA Assertions
 
 **Total assertions generated:** 2
+**Source breakdown:** 2 static / 0 llm
 **Coverage level:** MEDIUM
-**Time taken:** 0.0009837000397965312s
+**Time taken:** 2.0296837000059895s
 
-ASSERTION #1
+ASSERTION #1 [static]
 Type: RESET
 Signal: carry_out
 SVA Code:
 assert property (@(posedge clk) disable iff (!(!rst_n)) !rst_n |=> !$isunknown(carry_out));
 Description: Verifies carry_out is known immediately after reset is asserted.
 
-ASSERTION #2
+ASSERTION #2 [static]
 Type: RANGE
 Signal: count
 SVA Code:
@@ -95,14 +98,10 @@ COVERAGE LEVEL: MEDIUM
 
 ## Code Optimization Suggestions
 
-**Total suggestions:** 0
-**Code quality:** HIGH
-**Time taken:** 245.7s
-
-NO OPTIMIZATIONS SUGGESTED
-
-TOTAL OPTIMIZATIONS: 0
-QUALITY SCORE: HIGH
+Error: Ollama returned HTTP 404: {"error":"model 'qwen2.5:3b' not found"}
+Ollama URL: http://localhost:11434
+Model: qwen2.5:3b
+Checks: make sure `ollama serve` is running, the selected model is pulled, and the model can finish this prompt on your machine. If the model is just slow, increase config/settings.json `timeout` or use a smaller model.
 
 
 ---

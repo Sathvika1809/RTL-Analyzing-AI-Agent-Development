@@ -1173,18 +1173,42 @@ def validate_immediate_assertions_against_rtl(code: str, assertion: dict) -> boo
 def validate_optimization_against_rtl(code: str, optimization: dict) -> bool:
     """Evidence-based filter for optimizer outputs.
 
-    For now (to remove heuristics without breaking your workflow):
-    Only accept optimizations that match deterministic static findings.
-    """
-    # Map optimization item to a deterministic static finding via keywords in issue.
-    static = static_optimizations(code)
-    if not static:
-        return False
+    Two acceptance paths:
 
-    issue = str(optimization.get("issue", "")).lower()
-    for f in static:
-        if str(f.get("type", "")).lower() in issue or str(f.get("issue", "")).lower().split()[0] in issue:
-            return True
+    Path 1 (HARDCODED): accept if it matches a deterministic static finding
+    from static_optimizations() — this only ever detects hardcoded literal
+    values, so this path is unchanged from the original behavior.
+
+    Path 2 (NAMING / REDUNDANT / MISSING_COMMENTS / STYLE): these categories
+    are asked for in the optimizer prompt but static_optimizations() cannot
+    detect them at all. Previously such findings were rejected unconditionally
+    because this function required a matching static finding to exist first.
+    Instead, validate these via declared-identifier grounding (the same
+    anti-hallucination check used by the bug/timing agents): the finding is
+    accepted only if every identifier it references is actually declared in
+    this RTL module, so we still reject hallucinated signal/parameter names,
+    just without requiring a static-analysis match that can't exist for
+    these categories.
+    """
+    issue_type = str(optimization.get("type", "")).upper()
+
+    # Path 1: matches an existing static (HARDCODED) finding.
+    static = static_optimizations(code)
+    if static:
+        issue = str(optimization.get("issue", "")).lower()
+        for f in static:
+            if str(f.get("type", "")).lower() in issue or str(f.get("issue", "")).lower().split()[0] in issue:
+                return True
+
+    # Path 2: LLM-only categories, validated by declared-identifier grounding
+    # instead of requiring a matching static finding.
+    if issue_type in {"NAMING", "REDUNDANT", "MISSING_COMMENTS", "STYLE"}:
+        declared = (
+            set(extract_declared_identifiers(code)["signals"])
+            | set(extract_declared_identifiers(code)["parameters"])
+        )
+        return references_only_declared(optimization, declared)
+
     return False
 
 
@@ -1206,4 +1230,3 @@ def is_concrete_finding(item: dict, declared: Iterable[str]) -> bool:
     has_loc = any(kw in text for kw in ("line", "always", "assign", "case", "block"))
     has_sig = any(n.lower() in text for n in declared)
     return has_loc or has_sig
-

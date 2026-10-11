@@ -138,6 +138,8 @@ Before deciding that no assertions can be generated, you MUST check whether the 
 If at least ONE meaningful behavioral assertion can be derived,
 generate it.
 
+Never invent signals, clocks, resets, parameters, or ports that are not present in the RTL.
+
 Return zero assertions ONLY if none of the above are applicable.
 
 ====================================================
@@ -152,33 +154,48 @@ Filename:
 
 """
 
+# Files at or below this size get the FULL module passed to the LLM with no
+# chunking, so it retains cross-block context needed for behavioral
+# reasoning (e.g. FIFO full/empty logic spanning multiple always blocks).
+SMALL_FILE_CHAR_THRESHOLD = 6000
 
 
 class AssertionAgent(BaseAgent):
     """
     Specialized agent for generating SystemVerilog Assertions (SVA).
 
-    Fixes applied vs original:
+    Both tiers now ALWAYS run and their assertions are merged:
+      Tier 1: rtl_parser.static_assertions() - deterministic template-based
+              RESET / RANGE ($isunknown) assertions. Always available when a
+              clock is detected, but intentionally generic/low-value.
+      Tier 2: Ollama LLM - the ONLY tier capable of behavioral assertions
+              (FIFO, handshake, arbitration, one-hot, etc per the prompt).
+
+    Previously tier 2 was skipped entirely whenever tier 1 produced anything,
+    which for any clocked module was almost always true (static_assertions
+    generates a RESET check unconditionally whenever clk+rst are detected).
+    This meant the LLM's behavioral-assertion prompt effectively never ran on
+    clocked modules -- only the generic isunknown-style filler assertions
+    were ever returned.
+
+    Fixes retained from original:
       1. SVA code is inserted BEFORE endmodule, not after it.
-      2. shell=True removed from subprocess.run (was silently dropping WSL args).
-      3. Retry prompt now includes the original RTL so the LLM has context.
+      2. shell=True removed from subprocess.run.
+      3. Retry prompt includes the original RTL so the LLM has context.
       4. Prompt sva_code example uses correct concurrent SVA syntax.
-      5. Double comma in JSON schema example removed.
-      6. Duplicate variable initialisation block removed.
-      7. Comment indentation normalised.
     """
 
     def __init__(self, model: str = None):
         super().__init__(agent_name="assertion_agent", model=model)
         self.temp_sva_file = Path(__file__).resolve().parents[2] / "temp_verilator_sandbox.sv"
-        self.max_attempts  = 3
+        self.max_attempts = 3
 
     def _to_wsl_path(self, win_path: Path) -> str:
         abs_path = str(win_path.resolve()).replace("\\", "/")
         match = re.match(r"^([a-zA-Z]):(.*)", abs_path)
         if match:
             drive = match.group(1).lower()
-            rest  = match.group(2)
+            rest = match.group(2)
             return f"/mnt/{drive}{rest}"
         return abs_path
 
@@ -187,18 +204,11 @@ class AssertionAgent(BaseAgent):
     ) -> tuple[bool, str]:
         """
         Assembles RTL + SVA into a temp file and lints it with WSL Verilator.
-
-        FIX 1: SVA is inserted BEFORE endmodule so properties live inside the
-                module scope (the old code appended them after endmodule, which
-                is a syntax error for concurrent assertions).
-
-        FIX 2: shell=True removed.  On Windows, subprocess.run with shell=True
-                and a list argument passes only the first element to cmd.exe and
-                silently drops the rest, meaning Verilator was never actually run.
+        SVA is inserted BEFORE endmodule so properties live inside the module
+        scope. shell=True is intentionally not used.
         """
         sb_content = []
 
-        # Split at endmodule so assertions are placed INSIDE the module scope
         rtl_parts = original_rtl_code.rstrip().rsplit("endmodule", 1)
         sb_content.append(rtl_parts[0])
         sb_content.append("\n// ====== AUTOMATED AGENT GENERATED SVA PROPERTIES ======")
@@ -210,14 +220,10 @@ class AssertionAgent(BaseAgent):
                 sb_content.append(sva)
         sb_content.append("\nendmodule")
 
-        # Write assembled content to temp file
         self.temp_sva_file.write_text("\n".join(sb_content), encoding="utf-8")
-
-        # Translate path for WSL
         wsl_target_path = self._to_wsl_path(self.temp_sva_file)
 
         try:
-            # FIX 2: no shell=True — args are passed correctly to WSL
             result = subprocess.run(
                 ["wsl", "verilator", "--lint-only", "-Wall", wsl_target_path],
                 capture_output=True,
@@ -229,42 +235,81 @@ class AssertionAgent(BaseAgent):
 
     def analyze(self, filepath: str) -> dict:
         path = Path(filepath)
-        ...
+        if not path.exists():
+            return {"success": False, "error": f"File not found: {filepath}"}
+
         code = path.read_text(encoding="utf-8", errors="replace")
-        
-        t_start = time.monotonic()   # ← start timing immediately
+        print(f"  Assertion agent analyzing: {path.name}")
 
-        meta                     = extract_declared_identifiers(code)
-        deterministic_assertions = static_assertions(code)
+        t_start = time.monotonic()
 
-        # FIX 1: check static assertions BEFORE bailing on missing clock
-        if deterministic_assertions:
-            elapsed = time.monotonic() - t_start
-            total   = len(deterministic_assertions)
-            coverage = "MEDIUM" if total else "LOW"
-            return {
-                "success": True,
-                "filename": path.name,
-                "filepath": str(path),
-                "timestamp": datetime.now().isoformat(),
-                "model": self.model,
-                "assertions": deterministic_assertions,
-                "total_assertions": total,
-                "coverage": coverage,
-                "raw_response": self._format_markdown_response(deterministic_assertions, total, coverage),
-                "elapsed_s": elapsed,
-            }
+        meta = extract_declared_identifiers(code)
 
-        # If the module is combinational-only, allow an LLM fallback to
-        # generate *immediate* assertions (not concurrent properties).
-        if not meta["clocks"]:
-            print(f"  [AssertionAgent] {path.name} has no detected clock — generating combinational immediate assertions via LLM.")
-            comb_only_mode = True
+        # ---- Tier 1: static deterministic assertions (always computed) ----
+        static_assertions_list = static_assertions(code)
+        for a in static_assertions_list:
+            a["source"] = "static"
+
+        # ---- Tier 2: LLM behavioral assertions (always attempted) ----
+        comb_only_mode = not meta["clocks"]
+        llm_assertions, llm_error, llm_elapsed = self._run_llm_analysis(
+            code, path, meta, comb_only_mode
+        )
+
+        elapsed = time.monotonic() - t_start
+
+        if llm_error and not static_assertions_list:
+            # Only hard-fail if static tier also produced nothing.
+            return {"success": False, "error": llm_error}
+
+        # ---- Merge + dedupe ----
+        assertions = self._merge_and_dedupe(static_assertions_list, llm_assertions)
+        total_assertions = len(assertions)
+        coverage = self._compute_coverage(static_assertions_list, llm_assertions)
+
+        raw_response = self._format_markdown_response(assertions, total_assertions, coverage)
+
+        self.log_run(path.name, {
+            "assertions_generated": total_assertions,
+            "coverage": coverage,
+            "static_count": len(static_assertions_list),
+            "llm_count": len(llm_assertions),
+            "response_length": len(raw_response),
+            "source": "merged",
+        })
+
+        return {
+            "success": True,
+            "filename": path.name,
+            "filepath": str(path),
+            "timestamp": datetime.now().isoformat(),
+            "model": self.model,
+            "assertions": assertions,
+            "total_assertions": total_assertions,
+            "coverage": coverage,
+            "raw_response": raw_response,
+            "elapsed_s": elapsed,
+        }
+
+    def _run_llm_analysis(self, code: str, path: Path, meta: dict, comb_only_mode: bool):
+        """Runs the LLM tier (with Verilator syntax-verification retry loop)
+        and returns (assertions, error, elapsed). On failure after all
+        retries, returns ([], error_message, elapsed) so the caller can fall
+        back to static-only results instead of failing outright.
+        """
+        if len(code) <= SMALL_FILE_CHAR_THRESHOLD:
+            code_ctx = code
         else:
-            comb_only_mode = False
+            from src.core.semantic_chunker import chunk_sv, select_relevant_chunks, chunks_to_prompt_text
+            chunks = chunk_sv(code)
+            selected = select_relevant_chunks(
+                chunks,
+                query=ASSERTION_ANALYSIS_PROMPT,
+                top_k=14,
+                max_total_chars=8500,
+            )
+            code_ctx = chunks_to_prompt_text(selected) if selected else code
 
-        # When no clock is present, we still run the LLM path but require it
-        # to emit immediate assertions (not concurrent assert property).
         if comb_only_mode:
             comb_prompt = (
                 "COMBINATIONAL-MODULE ASSERTION MODE (NO CLOCK)\n"
@@ -273,38 +318,17 @@ class AssertionAgent(BaseAgent):
                 "concurrent properties.\n"
                 "Each assertion must only reference identifiers declared in the RTL.\n"
             )
-            prompt = ASSERTION_ANALYSIS_PROMPT + "\n" + comb_prompt
-        else:
-            prompt = None
-
-        # existing LLM path...
-
-
-        from src.core.semantic_chunker import chunk_sv, select_relevant_chunks, chunks_to_prompt_text
-
-        # Semantic chunking to ground assertions in the most relevant RTL regions.
-        chunks = chunk_sv(code)
-        selected = select_relevant_chunks(
-            chunks,
-            query=ASSERTION_ANALYSIS_PROMPT,
-            top_k=14,
-            max_total_chars=8500,
-        )
-        code_ctx = chunks_to_prompt_text(selected) if selected else code
-
-        if comb_only_mode:
-            prompt = prompt if prompt is not None else (ASSERTION_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx))
-            # append code context after the base prompt, since prompt currently includes comb_prompt
-            prompt = prompt + "\n\n" + "```systemverilog\n" + code_ctx + "\n```"
+            prompt = (
+                ASSERTION_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx)
+                + "\n" + comb_prompt
+            )
         else:
             prompt = ASSERTION_ANALYSIS_PROMPT.format(filename=path.name, code=code_ctx)
 
-
-        # FIX 5: single initialisation block (duplicate removed)
-        attempt              = 1
-        success              = False
-        final_parsed_json    = {}
-        elapsed_cumulative   = 0.0
+        attempt = 1
+        success = False
+        final_parsed_json = {}
+        elapsed_cumulative = 0.0
         last_compilation_error = ""
 
         while attempt <= self.max_attempts:
@@ -312,18 +336,27 @@ class AssertionAgent(BaseAgent):
 
             result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
             if not result["success"]:
-                return {"success": False, "error": result["error"]}
+                return [], result["error"], elapsed_cumulative
 
             elapsed_cumulative += result.get("elapsed", 0.0)
             parsed_json = self.parse_json_response(result["response"])
             parse_error = self.json_parse_error(parsed_json)
             if parse_error:
-                return {"success": False, "error": parse_error}
+                return [], parse_error, elapsed_cumulative
 
             if isinstance(parsed_json, list):
                 assertions = parsed_json
             else:
                 assertions = parsed_json.get("assertions", []) if isinstance(parsed_json, dict) else []
+
+            # Combinational immediate assertions can't be verified the same
+            # way concurrent SVA is (they aren't `assert property`), so skip
+            # the Verilator round-trip for comb_only_mode and accept as-is;
+            # they still go through validate_immediate_assertions_against_rtl below.
+            if comb_only_mode:
+                final_parsed_json = parsed_json
+                success = True
+                break
 
             is_valid_syntax, last_compilation_error = self._compile_via_wsl_verilator(code, assertions)
 
@@ -334,8 +367,6 @@ class AssertionAgent(BaseAgent):
                 break
             else:
                 print("    WSL Verilator caught syntax errors — retrying with error context.")
-                # FIX 3: retry prompt includes the original RTL so the LLM
-                #         knows which signal names are valid
                 prompt = (
                     f"Your previously generated SVA JSON failed Verilator compilation.\n\n"
                     f"### Original RTL (only use signals declared here — do NOT invent new ones):\n"
@@ -346,7 +377,6 @@ class AssertionAgent(BaseAgent):
                 )
                 attempt += 1
 
-        # Clean up temp file
         if self.temp_sva_file.exists():
             try:
                 self.temp_sva_file.unlink()
@@ -354,29 +384,13 @@ class AssertionAgent(BaseAgent):
                 pass
 
         if not success:
-            return {
-                "success": False,
-                "error":   f"SVA generation failed all {self.max_attempts} Verilator attempts.\n{last_compilation_error}",
-            }
+            return [], f"SVA generation failed all {self.max_attempts} Verilator attempts.\n{last_compilation_error}", elapsed_cumulative
 
         if isinstance(final_parsed_json, list):
-            assertions       = final_parsed_json
+            assertions = final_parsed_json
         else:
-            assertions       = final_parsed_json.get("assertions", []) if isinstance(final_parsed_json, dict) else []
+            assertions = final_parsed_json.get("assertions", []) if isinstance(final_parsed_json, dict) else []
 
-        # Semantic filtering (anti-hallucination): drop assertions that reference
-        # identifiers not declared in this RTL module.
-        declared_meta = extract_declared_identifiers(code)
-        declared_names = (
-            set(declared_meta.get("signals", []))
-            | set(declared_meta.get("parameters", []))
-            | set(declared_meta.get("clocks", []))
-            | set(declared_meta.get("resets", []))
-        )
-
-        # Evidence-based semantic filtering (anti-hallucination).
-        # - Clocked modules: validate concurrent `assert property` via clock/reset evidence.
-        # - Combinational-only modules: validate immediate assertions via declared-only token evidence.
         if meta["clocks"]:
             assertions = [
                 a for a in assertions
@@ -388,30 +402,35 @@ class AssertionAgent(BaseAgent):
                 if isinstance(a, dict) and validate_immediate_assertions_against_rtl(code, a)
             ]
 
+        for a in assertions:
+            if isinstance(a, dict):
+                a["source"] = "llm"
 
-        total_assertions = len(assertions)
-        coverage         = "MEDIUM" if assertions else "LOW"
+        return assertions, None, elapsed_cumulative
 
-        raw_response = self._format_markdown_response(assertions, total_assertions, coverage)
+    def _merge_and_dedupe(self, static_assertions_list: list, llm_assertions: list) -> list:
+        """Merge both tiers, dropping LLM assertions that duplicate a static
+        one on the same (type, signal) pair. Static wins on conflicts.
+        """
+        def key(a):
+            return (str(a.get("type", "")).upper(), str(a.get("signal", "")).lower())
 
-        self.log_run(path.name, {
-            "assertions_generated": total_assertions,
-            "coverage":             coverage,
-            "response_length":      len(str(final_parsed_json)),
-        })
+        seen = {key(a) for a in static_assertions_list}
+        merged = list(static_assertions_list)
+        for a in llm_assertions:
+            if key(a) not in seen:
+                merged.append(a)
+                seen.add(key(a))
+        return merged
 
-        return {
-            "success":          True,
-            "filename":         path.name,
-            "filepath":         str(path),
-            "timestamp":        datetime.now().isoformat(),
-            "model":            self.model,
-            "assertions":       assertions,
-            "total_assertions": total_assertions,
-            "coverage":         coverage,
-            "raw_response":     raw_response,
-            "elapsed_s":        elapsed_cumulative,
-        }
+    def _compute_coverage(self, static_assertions_list: list, llm_assertions: list) -> str:
+        total = len(static_assertions_list) + len(llm_assertions)
+        if total == 0:
+            return "LOW"
+        if llm_assertions:
+            # Behavioral (LLM-derived) coverage present -> higher confidence
+            return "HIGH" if len(llm_assertions) >= 2 else "MEDIUM"
+        return "MEDIUM"
 
     def _format_markdown_response(
         self, assertions: list, total_assertions: int, coverage: str
@@ -420,7 +439,7 @@ class AssertionAgent(BaseAgent):
             return "NO ASSERTIONS GENERATED\n\nTOTAL ASSERTIONS: 0\nCOVERAGE LEVEL: LOW\n"
         md = []
         for i, assertion in enumerate(assertions, 1):
-            md.append(f"ASSERTION #{i}")
+            md.append(f"ASSERTION #{i} [{assertion.get('source', 'unknown')}]")
             md.append(f"Type: {assertion.get('type', 'UNKNOWN')}")
             md.append(f"Signal: {assertion.get('signal', 'UNKNOWN')}")
             md.append(f"SVA Code:\n{assertion.get('sva_code', '')}")

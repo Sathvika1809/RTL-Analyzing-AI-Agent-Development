@@ -26,6 +26,16 @@ from src.agents.optimize_agent import OptimizerAgent
 from src.core.config import DEFAULT_MODEL
 
 
+def _source_breakdown(items: list) -> tuple[int, int]:
+    """Counts how many items in a findings list came from the static tier
+    vs the LLM tier. Items without a 'source' key (shouldn't happen after
+    the tier-merge fix, but defensive) are counted as neither.
+    """
+    static_count = sum(1 for i in items if isinstance(i, dict) and i.get("source") == "static")
+    llm_count = sum(1 for i in items if isinstance(i, dict) and i.get("source") == "llm")
+    return static_count, llm_count
+
+
 def save_combined_report(filename, bug_result, timing_result,
                           assertion_result, optimizer_result,
                           output_folder):
@@ -46,7 +56,9 @@ def save_combined_report(filename, bug_result, timing_result,
         # Bug Agent Section
         f.write("## Bug Analysis\n\n")
         if bug_result.get("success"):
+            static_n, llm_n = _source_breakdown(bug_result.get("bugs", []))
             f.write(f"**Total bugs found:** {bug_result['total_bugs']}\n")
+            f.write(f"**Source breakdown:** {static_n} static / {llm_n} llm\n")
             f.write(f"**Severity:** {bug_result['severity']}\n")
             f.write(f"**Time taken:** {bug_result['elapsed_s']}s\n\n")
             f.write(bug_result["raw_response"])
@@ -57,7 +69,9 @@ def save_combined_report(filename, bug_result, timing_result,
         # Timing Agent Section
         f.write("## Timing Analysis\n\n")
         if timing_result.get("success"):
+            static_n, llm_n = _source_breakdown(timing_result.get("timing_issues", []))
             f.write(f"**Total issues found:** {timing_result['total_issues']}\n")
+            f.write(f"**Source breakdown:** {static_n} static / {llm_n} llm\n")
             f.write(f"**Risk level:** {timing_result['risk']}\n")
             f.write(f"**Time taken:** {timing_result['elapsed_s']}s\n\n")
             f.write(timing_result["raw_response"])
@@ -68,7 +82,9 @@ def save_combined_report(filename, bug_result, timing_result,
         # Assertion Agent Section
         f.write("## Generated SVA Assertions\n\n")
         if assertion_result.get("success"):
+            static_n, llm_n = _source_breakdown(assertion_result.get("assertions", []))
             f.write(f"**Total assertions generated:** {assertion_result['total_assertions']}\n")
+            f.write(f"**Source breakdown:** {static_n} static / {llm_n} llm\n")
             f.write(f"**Coverage level:** {assertion_result['coverage']}\n")
             f.write(f"**Time taken:** {assertion_result['elapsed_s']}s\n\n")
             f.write(assertion_result["raw_response"])
@@ -79,7 +95,9 @@ def save_combined_report(filename, bug_result, timing_result,
         # Optimizer Agent Section
         f.write("## Code Optimization Suggestions\n\n")
         if optimizer_result.get("success"):
+            static_n, llm_n = _source_breakdown(optimizer_result.get("optimizations", []))
             f.write(f"**Total suggestions:** {optimizer_result['total_optimizations']}\n")
+            f.write(f"**Source breakdown:** {static_n} static / {llm_n} llm\n")
             f.write(f"**Code quality:** {optimizer_result['quality_score']}\n")
             f.write(f"**Time taken:** {optimizer_result['elapsed_s']}s\n\n")
             f.write(optimizer_result["raw_response"])
@@ -92,8 +110,7 @@ def save_combined_report(filename, bug_result, timing_result,
 
 def run_all_agents(rtl_folder="rtl_files",
                    output_folder="reports",
-                   model="llama3.2:latest",
-                   grounded: bool = False):
+                   model="llama3.2:latest"):
 
     """
     Main function. Runs all 4 agents sequentially on every .sv file.
@@ -167,15 +184,24 @@ def run_all_agents(rtl_folder="rtl_files",
 
         file_elapsed = time.time() - file_start
 
-        # Track summary
+        # Track summary, now including static/llm breakdowns
+        bug_static, bug_llm = _source_breakdown(bug_result.get("bugs", [])) if bug_result.get("success") else (0, 0)
+        timing_static, timing_llm = _source_breakdown(timing_result.get("timing_issues", [])) if timing_result.get("success") else (0, 0)
+        assertion_static, assertion_llm = _source_breakdown(assertion_result.get("assertions", [])) if assertion_result.get("success") else (0, 0)
+        opt_static, opt_llm = _source_breakdown(optimizer_result.get("optimizations", [])) if optimizer_result.get("success") else (0, 0)
+
         summary.append({
             "filename": filename,
             "bugs": bug_result.get("total_bugs", "N/A") if bug_result.get("success") else "ERR",
+            "bugs_split": f"{bug_static}/{bug_llm}",
             "severity": bug_result.get("severity", "N/A") if bug_result.get("success") else "ERR",
             "timing_issues": timing_result.get("total_issues", "N/A") if timing_result.get("success") else "ERR",
+            "timing_split": f"{timing_static}/{timing_llm}",
             "risk": timing_result.get("risk", "N/A") if timing_result.get("success") else "ERR",
             "assertions": assertion_result.get("total_assertions", "N/A") if assertion_result.get("success") else "ERR",
+            "assertions_split": f"{assertion_static}/{assertion_llm}",
             "optimizations": optimizer_result.get("total_optimizations", "N/A") if optimizer_result.get("success") else "ERR",
+            "opt_split": f"{opt_static}/{opt_llm}",
             "elapsed": round(file_elapsed, 1)
         })
 
@@ -184,33 +210,35 @@ def run_all_agents(rtl_folder="rtl_files",
 
     # Print summary dashboard
     total_elapsed = time.time() - start_total
-    print(f"\n{'='*60}")
+    print(f"\n{'='*80}")
     print(f"PHASE 3 ANALYSIS COMPLETE")
-    print(f"{'='*60}")
-    print(f"{'File':<15} {'Bugs':<6} {'Severity':<10} {'Timing':<8} {'Risk':<8} {'SVA':<6} {'Opts':<6} {'Time'}")
-    print(f"{'-'*60}")
+    print(f"{'='*80}")
+    print(f"{'File':<15} {'Bugs(s/l)':<12} {'Sev':<8} {'Timing(s/l)':<13} {'Risk':<7} "
+          f"{'SVA(s/l)':<10} {'Opts(s/l)':<10} {'Time'}")
+    print(f"{'-'*80}")
     for s in summary:
-        print(f"{s['filename']:<15} {str(s['bugs']):<6} {s['severity']:<10} "
-              f"{str(s['timing_issues']):<8} {s['risk']:<8} "
-              f"{str(s['assertions']):<6} {str(s['optimizations']):<6} {s['elapsed']}s")
-    print(f"{'-'*60}")
+        bugs_col = f"{s['bugs']} ({s['bugs_split']})"
+        timing_col = f"{s['timing_issues']} ({s['timing_split']})"
+        sva_col = f"{s['assertions']} ({s['assertions_split']})"
+        opts_col = f"{s['optimizations']} ({s['opt_split']})"
+        print(f"{s['filename']:<15} {bugs_col:<12} {s['severity']:<8} {timing_col:<13} "
+              f"{s['risk']:<7} {sva_col:<10} {opts_col:<10} {s['elapsed']}s")
+    print(f"{'-'*80}")
     print(f"Total files: {len(files)}")
     print(f"Total time: {total_elapsed:.1f}s")
     print(f"Reports saved to: {output_folder}/")
+    print("\n(s/l) = static findings / llm findings, per the tier-merge fix.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Phase 3 RTL agents on all RTL files.")
     parser.add_argument("--rtl-folder", default="rtl_files", help="Folder containing .sv files")
     parser.add_argument("--output-folder", default="reports", help="Folder for generated reports")
-    parser.add_argument("--model", default="qwen2.5:3b", help="Ollama model name")
-    parser.add_argument("--grounded", action="store_true", default=False, help="Enable grounded anti-hallucination wrapper")
+    parser.add_argument("--model", default="qwen2.5-coder:7b", help="Ollama model name")
     args = parser.parse_args()
-
 
     run_all_agents(
         rtl_folder=args.rtl_folder,
         output_folder=args.output_folder,
         model=args.model,
-        grounded=args.grounded
     )

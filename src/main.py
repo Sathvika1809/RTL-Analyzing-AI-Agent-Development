@@ -15,6 +15,17 @@ from src.agents.timing_agent import TimingAgent
 from src.agents.assertion_agent import AssertionAgent
 from src.agents.optimize_agent import OptimizerAgent
 
+
+def _source_breakdown(items: list) -> tuple[int, int]:
+    """Counts how many items in a findings list came from the static tier
+    vs the LLM tier. Mirrors the same helper in run_all_agents.py so both
+    entry points report tier splits consistently.
+    """
+    static_count = sum(1 for i in items if isinstance(i, dict) and i.get("source") == "static")
+    llm_count = sum(1 for i in items if isinstance(i, dict) and i.get("source") == "llm")
+    return static_count, llm_count
+
+
 def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
     """Runs parallel or sequential multi-agent analysis on a file or folder and prints CLI reports."""
     # Resolve files
@@ -49,7 +60,7 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
         filename = os.path.basename(path)
         print(f"\nAnalyzing: {filename}...")
         print("-" * 50)
-        
+
         file_start = time.time()
 
         if parallel:
@@ -64,17 +75,17 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
                     bug_res = bug_future.result()
                 except Exception as e:
                     bug_res = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
-                    
+
                 try:
                     timing_res = timing_future.result()
                 except Exception as e:
                     timing_res = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
-                    
+
                 try:
                     assertion_res = assertion_future.result()
                 except Exception as e:
                     assertion_res = {"success": False, "error": f"Exception in agent thread: {str(e)}"}
-                    
+
                 try:
                     optimizer_res = optimizer_future.result()
                 except Exception as e:
@@ -96,10 +107,16 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
             else:
                 return f"### [ERROR] {title} Agent Execution Failed\n\nReason: {res.get('error', default_err)}\n"
 
+        # Compute static/llm breakdowns for each agent's findings
+        bug_static, bug_llm = _source_breakdown(bug_res.get("bugs", [])) if bug_res.get("success") else (0, 0)
+        timing_static, timing_llm = _source_breakdown(timing_res.get("timing_issues", [])) if timing_res.get("success") else (0, 0)
+        assertion_static, assertion_llm = _source_breakdown(assertion_res.get("assertions", [])) if assertion_res.get("success") else (0, 0)
+        opt_static, opt_llm = _source_breakdown(optimizer_res.get("optimizations", [])) if optimizer_res.get("success") else (0, 0)
+
         # Save markdown report
         report_name = os.path.splitext(filename)[0] + "_cli_report.md"
         report_path = os.path.join(reports_dir, report_name)
-        
+
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(f"# Phase 3 RTL CLI Report: {filename}\n\n")
             f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -107,47 +124,69 @@ def run_cli_analysis(file_path: str, model: str, parallel: bool = False):
             f.write(f"**Execution Mode:** {'Parallel' if parallel else 'Sequential'}\n")
             f.write(f"**Time Taken:** {file_elapsed:.1f}s\n\n")
             f.write("---\n\n")
+
             f.write("## Bug Analysis\n\n")
+            if bug_res.get("success"):
+                f.write(f"**Source breakdown:** {bug_static} static / {bug_llm} llm\n\n")
             f.write(get_section_content(bug_res, "Bug", "Unknown error analyzing bugs."))
             f.write("\n\n---\n\n")
+
             f.write("## Timing Analysis\n\n")
+            if timing_res.get("success"):
+                f.write(f"**Source breakdown:** {timing_static} static / {timing_llm} llm\n\n")
             f.write(get_section_content(timing_res, "Timing", "Unknown error analyzing timing."))
             f.write("\n\n---\n\n")
+
             f.write("## Generated SVA Assertions\n\n")
+            if assertion_res.get("success"):
+                f.write(f"**Source breakdown:** {assertion_static} static / {assertion_llm} llm\n\n")
             f.write(get_section_content(assertion_res, "Assertion", "Unknown error generating assertions."))
             f.write("\n\n---\n\n")
+
             f.write("## Code Optimization Suggestions\n\n")
+            if optimizer_res.get("success"):
+                f.write(f"**Source breakdown:** {opt_static} static / {opt_llm} llm\n\n")
             f.write(get_section_content(optimizer_res, "Optimizer", "Unknown error analyzing optimizations."))
             f.write("\n\n---\n\n")
 
         print(f"Report written to: {report_path}")
-        
-        # Track summary statistics
+
+        # Track summary statistics, now including static/llm splits
         summary.append({
             "filename": filename,
             "bugs": bug_res.get("total_bugs", 0) if bug_res.get("success") else "ERR",
+            "bugs_split": f"{bug_static}/{bug_llm}",
             "severity": bug_res.get("severity", "LOW") if bug_res.get("success") else "ERR",
             "timing": timing_res.get("total_issues", 0) if timing_res.get("success") else "ERR",
+            "timing_split": f"{timing_static}/{timing_llm}",
             "risk": timing_res.get("risk", "LOW") if timing_res.get("success") else "ERR",
             "sva": assertion_res.get("total_assertions", 0) if assertion_res.get("success") else "ERR",
+            "sva_split": f"{assertion_static}/{assertion_llm}",
             "opts": optimizer_res.get("total_optimizations", 0) if optimizer_res.get("success") else "ERR",
+            "opts_split": f"{opt_static}/{opt_llm}",
             "time": round(file_elapsed, 1)
         })
 
     # Print summary dashboard to console
     total_elapsed = time.time() - start_total
-    print(f"\n{'='*82}")
+    print(f"\n{'='*90}")
     print(f"SUMMARY REPORT METRICS DASHBOARD")
-    print(f"{'='*82}")
-    print(f"{'RTL Design File':<22} {'Bugs':<6} {'Severity':<10} {'Timing':<8} {'Risk':<8} {'SVA':<6} {'Opts':<6} {'Time'}")
-    print(f"{'-'*82}")
+    print(f"{'='*90}")
+    print(f"{'RTL Design File':<22} {'Bugs(s/l)':<12} {'Sev':<9} {'Timing(s/l)':<13} "
+          f"{'Risk':<8} {'SVA(s/l)':<10} {'Opts(s/l)':<10} {'Time'}")
+    print(f"{'-'*90}")
     for s in summary:
-        print(f"{s['filename']:<22} {str(s['bugs']):<6} {str(s['severity']):<10} "
-              f"{str(s['timing']):<8} {str(s['risk']):<8} "
-              f"{str(s['sva']):<6} {str(s['opts']):<6} {s['time']}s")
-    print(f"{'-'*82}")
+        bugs_col = f"{s['bugs']} ({s['bugs_split']})"
+        timing_col = f"{s['timing']} ({s['timing_split']})"
+        sva_col = f"{s['sva']} ({s['sva_split']})"
+        opts_col = f"{s['opts']} ({s['opts_split']})"
+        print(f"{s['filename']:<22} {bugs_col:<12} {str(s['severity']):<9} {timing_col:<13} "
+              f"{str(s['risk']):<8} {sva_col:<10} {opts_col:<10} {s['time']}s")
+    print(f"{'-'*90}")
     print(f"Total Files: {len(files)} | Total Time: {total_elapsed:.1f}s")
-    print(f"All reports saved to: {reports_dir}/\n")
+    print(f"All reports saved to: {reports_dir}/")
+    print("\n(s/l) = static findings / llm findings, per the tier-merge fix.\n")
+
 
 def main():
     parser = argparse.ArgumentParser(description="RTL AI Verification & Analysis Assistant")
@@ -158,7 +197,7 @@ def main():
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address for Web Server")
     parser.add_argument("--port", type=int, default=8000, help="Port address for Web Server")
     parser.add_argument("--parallel", action="store_true", help="Run verification checks in parallel (higher resources/timeout risk)")
-    
+
     args = parser.parse_args()
 
     # Default to web mode if neither is specified
@@ -173,6 +212,7 @@ def main():
         print(f"Starting RTL AI verification server on http://{args.host}:{args.port}")
         print("=" * 60)
         uvicorn.run("src.web.server:app", host=args.host, port=args.port, reload=True)
+
 
 if __name__ == "__main__":
     main()

@@ -9,7 +9,7 @@ def load_config() -> dict:
     """Loads settings from config/settings.json, falling back to defaults if not found."""
     defaults = {
         "ollama_url": "http://localhost:11434",
-        "default_model": "qwen2.5:3b",
+        "default_model": "qwen2.5-coder:7b",
         "timeout": 800,
         "temperature": 0.1
     }
