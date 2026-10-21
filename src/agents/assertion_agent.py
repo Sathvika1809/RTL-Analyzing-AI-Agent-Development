@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 import time
@@ -164,51 +165,31 @@ class AssertionAgent(BaseAgent):
     """
     Specialized agent for generating SystemVerilog Assertions (SVA).
 
-    Both tiers now ALWAYS run and their assertions are merged:
+    Both tiers ALWAYS run and their assertions are merged:
       Tier 1: rtl_parser.static_assertions() - deterministic template-based
-              RESET / RANGE ($isunknown) assertions. Always available when a
-              clock is detected, but intentionally generic/low-value.
-      Tier 2: Ollama LLM - the ONLY tier capable of behavioral assertions
-              (FIFO, handshake, arbitration, one-hot, etc per the prompt).
-
-    Previously tier 2 was skipped entirely whenever tier 1 produced anything,
-    which for any clocked module was almost always true (static_assertions
-    generates a RESET check unconditionally whenever clk+rst are detected).
-    This meant the LLM's behavioral-assertion prompt effectively never ran on
-    clocked modules -- only the generic isunknown-style filler assertions
-    were ever returned.
-
-    Fixes retained from original:
-      1. SVA code is inserted BEFORE endmodule, not after it.
-      2. shell=True removed from subprocess.run.
-      3. Retry prompt includes the original RTL so the LLM has context.
-      4. Prompt sva_code example uses correct concurrent SVA syntax.
+              RESET / RANGE ($isunknown) assertions.
+      Tier 2: Ollama LLM - capable of behavioral assertions.
+    
+    Syntax validation is executed natively using Icarus Verilog (iverilog).
     """
 
     def __init__(self, model: str = None):
         super().__init__(agent_name="assertion_agent", model=model)
-        self.temp_sva_file = Path(__file__).resolve().parents[2] / "temp_verilator_sandbox.sv"
+        self.temp_sva_file = Path(__file__).resolve().parents[2] / "temp_iverilog_sandbox.sv"
         self.max_attempts = 3
 
-    def _to_wsl_path(self, win_path: Path) -> str:
-        abs_path = str(win_path.resolve()).replace("\\", "/")
-        match = re.match(r"^([a-zA-Z]):(.*)", abs_path)
-        if match:
-            drive = match.group(1).lower()
-            rest = match.group(2)
-            return f"/mnt/{drive}{rest}"
-        return abs_path
-
-    def _compile_via_wsl_verilator(
+    def _compile_via_iverilog(
         self, original_rtl_code: str, assertions: list
     ) -> tuple[bool, str]:
         """
-        Assembles RTL + SVA into a temp file and lints it with WSL Verilator.
-        SVA is inserted BEFORE endmodule so properties live inside the module
-        scope. shell=True is intentionally not used.
+        Assembles RTL + SVA into a temp file and syntax checks it with Icarus Verilog (iverilog).
+        SVA is inserted BEFORE endmodule so properties live inside the module scope.
         """
-        sb_content = []
+        iverilog_bin = shutil.which("iverilog")
+        if not iverilog_bin:
+            return False, "TOOLCHAIN_MISSING: 'iverilog' was not found in system PATH."
 
+        sb_content = []
         rtl_parts = original_rtl_code.rstrip().rsplit("endmodule", 1)
         sb_content.append(rtl_parts[0])
         sb_content.append("\n// ====== AUTOMATED AGENT GENERATED SVA PROPERTIES ======")
@@ -220,18 +201,23 @@ class AssertionAgent(BaseAgent):
                 sb_content.append(sva)
         sb_content.append("\nendmodule")
 
-        self.temp_sva_file.write_text("\n".join(sb_content), encoding="utf-8")
-        wsl_target_path = self._to_wsl_path(self.temp_sva_file)
-
         try:
+            self.temp_sva_file.write_text("\n".join(sb_content), encoding="utf-8")
+            
+            # Construct iverilog command (-g2012 enables SystemVerilog features)
+            cmd = [iverilog_bin, "-g2012", "-o", os.devnull, str(self.temp_sva_file)]
+            
             result = subprocess.run(
-                ["wsl", "verilator", "--lint-only", "-Wall", wsl_target_path],
+                cmd,
                 capture_output=True,
                 text=True,
+                timeout=15
             )
             return result.returncode == 0, result.stderr
+        except subprocess.TimeoutExpired:
+            return False, "TOOLCHAIN_TIMEOUT: Verification timed out after 15 seconds."
         except Exception as e:
-            return False, f"Subprocess error connecting to WSL: {str(e)}"
+            return False, f"Subprocess error running iverilog: {str(e)}"
 
     def analyze(self, filepath: str) -> dict:
         path = Path(filepath)
@@ -292,7 +278,7 @@ class AssertionAgent(BaseAgent):
         }
 
     def _run_llm_analysis(self, code: str, path: Path, meta: dict, comb_only_mode: bool):
-        """Runs the LLM tier (with Verilator syntax-verification retry loop)
+        """Runs the LLM tier (with iverilog syntax-verification retry loop)
         and returns (assertions, error, elapsed). On failure after all
         retries, returns ([], error_message, elapsed) so the caller can fall
         back to static-only results instead of failing outright.
@@ -332,7 +318,7 @@ class AssertionAgent(BaseAgent):
         last_compilation_error = ""
 
         while attempt <= self.max_attempts:
-            print(f"    [Verilator Verification Loop] Attempt {attempt}/{self.max_attempts}")
+            print(f"    [Icarus Verilog Verification Loop] Attempt {attempt}/{self.max_attempts}")
 
             result = self.call_ollama(prompt, json_mode=True, max_tokens=800)
             if not result["success"]:
@@ -349,30 +335,28 @@ class AssertionAgent(BaseAgent):
             else:
                 assertions = parsed_json.get("assertions", []) if isinstance(parsed_json, dict) else []
 
-            # Combinational immediate assertions can't be verified the same
-            # way concurrent SVA is (they aren't `assert property`), so skip
-            # the Verilator round-trip for comb_only_mode and accept as-is;
-            # they still go through validate_immediate_assertions_against_rtl below.
+            # Combinational immediate assertions skip the iverilog round-trip
+            # check and go through validate_immediate_assertions_against_rtl below.
             if comb_only_mode:
                 final_parsed_json = parsed_json
                 success = True
                 break
 
-            is_valid_syntax, last_compilation_error = self._compile_via_wsl_verilator(code, assertions)
+            is_valid_syntax, last_compilation_error = self._compile_via_iverilog(code, assertions)
 
             if is_valid_syntax:
-                print("    SVA syntax verification passed via WSL Verilator.")
+                print("    SVA syntax verification passed via Icarus Verilog.")
                 final_parsed_json = parsed_json
                 success = True
                 break
             else:
-                print("    WSL Verilator caught syntax errors — retrying with error context.")
+                print("    Icarus Verilog caught syntax errors — retrying with error context.")
                 prompt = (
-                    f"Your previously generated SVA JSON failed Verilator compilation.\n\n"
+                    f"Your previously generated SVA JSON failed Icarus Verilog compilation.\n\n"
                     f"### Original RTL (only use signals declared here — do NOT invent new ones):\n"
                     f"```systemverilog\n{code}\n```\n\n"
                     f"### Your Previous Broken Output:\n{result['response']}\n\n"
-                    f"### Verilator Errors:\n{last_compilation_error}\n\n"
+                    f"### Icarus Verilog Errors:\n{last_compilation_error}\n\n"
                     f"Fix the assertions and return valid JSON matching the original schema exactly."
                 )
                 attempt += 1
@@ -384,7 +368,7 @@ class AssertionAgent(BaseAgent):
                 pass
 
         if not success:
-            return [], f"SVA generation failed all {self.max_attempts} Verilator attempts.\n{last_compilation_error}", elapsed_cumulative
+            return [], f"SVA generation failed all {self.max_attempts} Icarus Verilog attempts.\n{last_compilation_error}", elapsed_cumulative
 
         if isinstance(final_parsed_json, list):
             assertions = final_parsed_json
