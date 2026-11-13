@@ -1,0 +1,283 @@
+{
+ "path": "benchmarks/real_world",
+ "model": "qwen2.5-coder:7b",
+ "generated": "2026-11-13T13:16:46",
+ "elapsed_s": 513.0,
+ "modules": [
+  {
+   "module": "async_fifo_cdc",
+   "file": "benchmarks\\real_world\\async_fifo_cdc.sv",
+   "start_line": 1,
+   "end_line": 71,
+   "loc": 71,
+   "children": [],
+   "agents": {
+    "bug": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [
+      {
+       "type": "FUNCTIONAL",
+       "signal": "full_o",
+       "evidence": "assign full_o = (wr_ptr_bin == rd_ptr_sync2);",
+       "problem": "The full condition checks if the write pointer equals the read pointer, which is incorrect. It should check if the write pointer is one step ahead of the read pointer to indicate that the FIFO is full. The missing MSB inversion in the comparison leads to incorrect full condition detection.",
+       "impact": "The FIFO may report as full when it is not, leading to data loss or overflow errors.",
+       "fix": "Change the full condition to `assign full_o = (wr_ptr_bin == (rd_ptr_sync2 + 1'b1));`",
+       "line": 47,
+       "source": "llm",
+       "location": "full_o at line 47"
+      },
+      {
+       "type": "FUNCTIONAL",
+       "signal": "empty_o",
+       "evidence": "assign empty_o = (rd_ptr_bin == wr_ptr_sync2);",
+       "problem": "The empty condition checks if the read pointer equals the write pointer, which is incorrect. It should check if the read pointer is one step ahead of the write pointer to indicate that the FIFO is empty. The missing MSB inversion in the comparison leads to incorrect empty condition detection.",
+       "impact": "The FIFO may report as empty when it is not, leading to data underflow or read errors.",
+       "fix": "Change the empty condition to `assign empty_o = (rd_ptr_bin == (wr_ptr_sync2 + 1'b1));`",
+       "line": 70,
+       "source": "llm",
+       "location": "empty_o at line 70"
+      }
+     ],
+     "static": 0,
+     "llm": 2,
+     "llm_stats": {
+      "returned": 2,
+      "kept": 2,
+      "rejected": {}
+     },
+     "llm_error": null
+    },
+    "timing": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [
+      {
+       "type": "CDC",
+       "signal": "rd_ptr_bin",
+       "evidence": "always_ff @(posedge wr_clk or negedge wr_rst_n) begin\n    if (!wr_rst_n) begin\n        rd_ptr_sync1 <= '0;\n        rd_ptr_sync2 <= '0;\n    end else begin\n        rd_ptr_sync1 <= rd_ptr_bin;\n        rd_ptr_sync2 <= rd_ptr_sync1;\n    end\nend\n",
+       "problem": "The signal rd_ptr_bin is driven by rd_clk and captured by wr_clk without any synchronization. This can lead to metastability issues if rd_ptr_bin changes while being captured by wr_clk.",
+       "risk": "Metastability, potential data corruption, and timing violations in the read domain due to the lack of synchronization between the two clock domains.",
+       "fix": "Use a synchronization mechanism such as a Gray code encoding for rd_ptr_bin to ensure proper synchronization between the two clock domains.",
+       "line": 36,
+       "source": "llm",
+       "location": "rd_ptr_bin at line 36"
+      }
+     ],
+     "static": 0,
+     "llm": 1,
+     "llm_stats": {
+      "returned": 2,
+      "kept": 1,
+      "rejected": {
+       "trivial_combo_path": 1
+      }
+     },
+     "llm_error": null
+    },
+    "assertion": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [
+      {
+       "type": "RESET",
+       "signal": "wr_ptr_bin",
+       "sva_code": "assert property (@(posedge wr_clk) !wr_rst_n |=> !$isunknown(wr_ptr_bin));",
+       "description": "Verifies wr_ptr_bin is known one cycle after reset is asserted.",
+       "source": "static"
+      },
+      {
+       "type": "RANGE",
+       "signal": "rd_ptr_sync1",
+       "sva_code": "assert property (@(posedge wr_clk) disable iff (!wr_rst_n) !$isunknown(rd_ptr_sync1));",
+       "description": "Checks rd_ptr_sync1 never becomes X/Z once reset is released.",
+       "source": "static"
+      },
+      {
+       "type": "FUNCTIONAL",
+       "signal": "full_o",
+       "sva_code": "assert property (@(posedge wr_clk) disable iff (!wr_rst_n) (full_o |-> wr_ptr_bin != rd_ptr_sync2));",
+       "description": "Full condition should not be true when the write pointer is not equal to the read pointer.",
+       "source": "llm",
+       "lint": "skipped"
+      },
+      {
+       "type": "FUNCTIONAL",
+       "signal": "empty_o",
+       "sva_code": "assert property (@(posedge rd_clk) disable iff (!rd_rst_n) (empty_o |-> rd_ptr_bin != wr_ptr_sync2));",
+       "description": "Empty condition should not be true when the read pointer is not equal to the write pointer.",
+       "source": "llm",
+       "lint": "skipped"
+      },
+      {
+       "type": "STATE",
+       "signal": "wr_ptr_bin",
+       "sva_code": "assert property (@(posedge wr_clk) disable iff (!wr_rst_n) (wr_ptr_bin[ADDR_W] == 1'b0));",
+       "description": "Write pointer should always be in the range of 0 to DEPTH-1.",
+       "source": "llm",
+       "lint": "skipped"
+      },
+      {
+       "type": "STATE",
+       "signal": "rd_ptr_bin",
+       "sva_code": "assert property (@(posedge rd_clk) disable iff (!rd_rst_n) (rd_ptr_bin[ADDR_W] == 1'b0));",
+       "description": "Read pointer should always be in the range of 0 to DEPTH-1.",
+       "source": "llm",
+       "lint": "skipped"
+      },
+      {
+       "type": "STATE",
+       "signal": "wr_ptr_sync1",
+       "sva_code": "assert property (@(posedge wr_clk) disable iff (!wr_rst_n) (wr_ptr_sync1[ADDR_W] == 1'b0));",
+       "description": "Synchronized write pointer should always be in the range of 0 to DEPTH-1.",
+       "source": "llm",
+       "lint": "skipped"
+      },
+      {
+       "type": "STATE",
+       "signal": "wr_ptr_sync2",
+       "sva_code": "assert property (@(posedge wr_clk) disable iff (!wr_rst_n) (wr_ptr_sync2[ADDR_W] == 1'b0));",
+       "description": "Synchronized write pointer should always be in the range of 0 to DEPTH-1.",
+       "source": "llm",
+       "lint": "skipped"
+      },
+      {
+       "type": "STATE",
+       "signal": "rd_ptr_sync1",
+       "sva_code": "assert property (@(posedge rd_clk) disable iff (!rd_rst_n) (rd_ptr_sync1[ADDR_W] == 1'b0));",
+       "description": "Synchronized read pointer should always be in the range of 0 to DEPTH-1.",
+       "source": "llm",
+       "lint": "skipped"
+      },
+      {
+       "type": "STATE",
+       "signal": "rd_ptr_sync2",
+       "sva_code": "assert property (@(posedge rd_clk) disable iff (!rd_rst_n) (rd_ptr_sync2[ADDR_W] == 1'b0));",
+       "description": "Synchronized read pointer should always be in the range of 0 to DEPTH-1.",
+       "source": "llm",
+       "lint": "skipped"
+      }
+     ],
+     "static": 2,
+     "llm": 8,
+     "llm_stats": {
+      "returned": 8,
+      "kept": 8,
+      "rejected": {},
+      "lint_note": "baseline RTL lint = skipped"
+     },
+     "llm_error": null
+    },
+    "optimizer": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [],
+     "static": 0,
+     "llm": 0,
+     "llm_stats": {
+      "returned": 0,
+      "kept": 0,
+      "rejected": {}
+     },
+     "llm_error": null
+    }
+   }
+  },
+  {
+   "module": "tx_burst_ctrl",
+   "file": "benchmarks\\real_world\\tx_burst_ctrl.sv",
+   "start_line": 1,
+   "end_line": 45,
+   "loc": 45,
+   "children": [],
+   "agents": {
+    "bug": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [
+      {
+       "type": "RESET",
+       "location": "wr_data_o in sequential block at line 15",
+       "problem": "wr_data_o is updated in a reset-aware block but absent from the reset branch.",
+       "impact": "Register holds unknown or stale value after reset.",
+       "fix": "Add a deterministic reset assignment for wr_data_o inside the reset branch.",
+       "source": "static"
+      }
+     ],
+     "static": 1,
+     "llm": 0,
+     "llm_stats": {
+      "returned": 0,
+      "kept": 0,
+      "rejected": {}
+     },
+     "llm_error": null
+    },
+    "timing": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [],
+     "static": 0,
+     "llm": 0,
+     "llm_stats": {
+      "returned": 1,
+      "kept": 0,
+      "rejected": {
+       "cdc_needs_two_clocks": 1
+      }
+     },
+     "llm_error": null
+    },
+    "assertion": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [
+      {
+       "type": "RESET",
+       "signal": "state",
+       "sva_code": "assert property (@(posedge clk) !rst_n |=> !$isunknown(state));",
+       "description": "Verifies state is known one cycle after reset is asserted.",
+       "source": "static"
+      },
+      {
+       "type": "RANGE",
+       "signal": "pkt_cnt",
+       "sva_code": "assert property (@(posedge clk) disable iff (!rst_n) !$isunknown(pkt_cnt));",
+       "description": "Checks pkt_cnt never becomes X/Z once reset is released.",
+       "source": "static"
+      }
+     ],
+     "static": 2,
+     "llm": 0,
+     "llm_stats": {
+      "returned": 0,
+      "kept": 0,
+      "rejected": {}
+     },
+     "llm_error": "Failed to parse model output as JSON. Preview: {\"assertions\": [\n    {\"type\": \"FUNCTIONAL\", \"signal\": \"wr_en_o\", \"sva_code\": \"assert property (@(posedge clk) disable iff (!rst_n) wr_en_o == 1'b0);\", \"description\": \"Write enable should be disabled during reset.\"},\n    {\"type\": \"FUNCTIONAL\", \"signal\": \"wr_en_o\", \"sva_code\": \"assert property (@(posedge clk) disable iff (!rst_n) wr_en_o |-> wr_data_o != 4'h0);\", \"description\": \"Write data should not be zero when write enable is asserted.\"},\n    {\"type\": \"FUNCTIONAL\", \"signal\": \"wr_en_o\", \"sva_cod"
+    },
+    "optimizer": {
+     "success": true,
+     "error": null,
+     "cached": false,
+     "items": [],
+     "static": 0,
+     "llm": 0,
+     "llm_stats": {
+      "returned": 0,
+      "kept": 0,
+      "rejected": {}
+     },
+     "llm_error": null
+    }
+   }
+  }
+ ]
+}

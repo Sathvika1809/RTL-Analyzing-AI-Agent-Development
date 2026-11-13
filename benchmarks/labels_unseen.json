@@ -1,0 +1,85 @@
+{
+    
+  "_comment": "Unseen designs. Names differ from the dev set (rstb, arst, clk_a, reset_n, *_i/_o/_q).",
+  "pulse_gen.sv": {
+    "bugs": [
+      {
+        "type": "FUNCTIONAL",
+        "signal": "cnt_r"
+      },
+      {
+        "type": "RESET",
+        "signal": "done_o"
+      }
+    ],
+    "timing": [
+      {
+        "type": "BLOCKING",
+        "signal": "cnt_r"
+      }
+    ]
+  },
+  "lane_mux.sv": {
+    "bugs": [
+      {
+        "type": "LATCH",
+        "signal": "dout"
+      }
+    ],
+    "timing": [
+      {
+        "type": "LATCH",
+        "signal": "dout"
+      }
+    ]
+  },
+  "req_gnt.sv": {
+    "bugs": [
+      {
+        "type": "FUNCTIONAL",
+        "signal": "gnt_q"
+      }
+    ],
+    "timing": [
+      {
+        "type": "BLOCKING",
+        "signal": "gnt_q"
+      }
+    ]
+  },
+  "ptr_bus.sv": {
+    "bugs": [
+      {
+        "type": "FUNCTIONAL",
+        "signal": "ptr"
+      },
+      {
+        "type": "FUNCTIONAL",
+        "signal": "err_o"
+      }
+    ],
+    "timing": []
+  },
+  "prio_enc.sv": {
+    "bugs": [
+      {
+        "type": "LATCH",
+        "signal": "idx"
+      }
+    ],
+    "timing": [
+      {
+        "type": "LATCH",
+        "signal": "idx"
+      }
+    ]
+  },
+  "shift_reg.sv": {
+    "bugs": [],
+    "timing": []
+  },
+  "edge_detect.sv": {
+    "bugs": [],
+    "timing": []
+  }
+}

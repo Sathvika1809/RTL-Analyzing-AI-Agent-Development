@@ -1,0 +1,12 @@
+
+{
+  "async_fifo_cdc.sv": {
+    "bugs": [
+      { "type": "FUNCTIONAL", "signal": "full_o" }
+    ],
+    "timing": [
+      { "type": "CDC", "signal": "rd_ptr_bin" },
+      { "type": "CDC", "signal": "wr_ptr_bin" }
+    ]
+  }
+}

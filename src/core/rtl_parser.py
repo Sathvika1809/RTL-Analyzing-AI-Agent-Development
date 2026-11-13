@@ -1,20 +1,50 @@
 """
-rtl_parser.py  —  pyslang-based RTL static analysis.
-Replaces rtl_static.py entirely.
-Public API is identical so every agent only needs to change its import line.
+rtl_parser.py  -  pyslang-based RTL static analysis (with text fallbacks).
 
-Install dependency:  pip install pyslang
+Public API is unchanged.  New in this version (see CHANGES at the bottom of
+the docstring list):
+  extract_declared_identifiers() additionally returns "inputs" and fills
+  "arrays" (unpacked arrays / memories).
+
+CHANGES vs previous version
+  1. latch check: `else if` no longer counts as a complete `else`
+  2. reset/clock detection is token based ("first_valid", "burst_len",
+     "report_en" are no longer reset signals; "clk_en" is no longer a clock)
+  3. _assignments(): statement based. Fixes lines starting with end*/for*/
+     case* identifiers being skipped, `if (a <= b)` parsed as an assignment,
+     several statements per line, multi-line statements.
+  4. _continuous_assigns(): multi-line assigns
+  5. legacy `always @(posedge clk)` is treated as sequential: blocking
+     assignments / missing reset are checked, and it is no longer reported
+     as a latch
+  6. memories (unpacked arrays) are not reported as "missing reset"
+  7. extract_clocking_blocks(): `posedge clk or negedge rst_n` now yields
+     edge=posedge (it used to yield negedge, so validate_sva_against_rtl
+     rejected every LLM assertion on async-reset designs); combinational
+     `always @(*)` is no longer treated as clocked
+  8. static_assertions(): clock/edge/reset polarity come from the block that
+     actually drives the target; inputs and never-reset registers are not
+     asserted to be non-X
+  9. pyslang import is optional (text fallbacks keep working without it)
+ 10. extra_check.py heuristics (unused inputs, missing case defaults, width
+     literals, multi-bit CDC) are wired into static_bug_findings() and
+     static_timing_findings(), and COMMENTS is accepted in
+     validate_optimization_against_rtl().
 """
 
 from __future__ import annotations
 
 import re
-import pyslang
 from typing import Iterable
 
-# ─────────────────────────────────────────────────────────────────────────────
+try:
+    import pyslang
+except ImportError:          # text fallbacks are used everywhere
+    pyslang = None
+
+# --------------------------------------------------------------------------
 # Constants
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 
 KEYWORDS = {
     "module", "endmodule", "input", "output", "inout", "wire", "reg", "logic",
@@ -24,46 +54,53 @@ KEYWORDS = {
     "not", "default", "typedef", "enum", "struct", "signed", "unsigned",
 }
 
-# Maps pyslang ProceduralBlockKind names to short internal labels
 _PROC_KINDS: dict[str, str] = {
-    "AlwaysFF":    "ff",
-    "AlwaysComb":  "comb",
-    "AlwaysLatch": "latch",
-    "Always":      "always",
-    "Initial":     "initial",
-    "Final":       "final",
+    "AlwaysFF": "ff", "AlwaysComb": "comb", "AlwaysLatch": "latch",
+    "Always": "always", "Initial": "initial", "Final": "final",
 }
 
-# Clock / reset naming-convention patterns — covers a broad range of industry names
-_CLK_PAT = re.compile(
-    r"^clk$|^clock$|_clk$|_clock$|^pclk$|^aclk$|^hclk$|^fclk$|^sys_ck$|_ck$", re.I
-)
-_CLK_PFX = re.compile(r"^clk|^clock", re.I)
-_RST_PAT = re.compile(
-    r"^rst$|^rst_n$|^reset$|^reset_n$|^areset$|^areset_n$|^por$|^por_n$"
-    r"|_rst$|_rst_n$|_reset$|_reset_n$",
-    re.I,
-)
-_RST_GEN = re.compile(r"rst|reset|por", re.I)
+_RESET_TOKENS = {
+    "rst", "reset", "rstn", "resetn", "arst", "areset", "nrst", "nreset",
+    "srst", "sreset", "por", "porn", "rstb", "resetb", "rstz", "resetz",
+}
+_CLOCK_TOKENS = {"clk", "clock", "ck", "aclk", "pclk", "hclk", "fclk", "sclk"}
+_NOT_CLOCK_LAST = {"en", "enable", "sel", "valid", "ready", "cnt", "count",
+                   "req", "ack", "stop"}
 
-# Signals the start of a new top-level RTL construct — stops block extraction in
-# single-statement mode so we never accidentally capture the next always block
 _BLOCK_STARTER = re.compile(
     r"^\s*(always|always_ff|always_comb|always_latch|initial|final|assign\s|endmodule)\b"
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+def _tokens(name: str) -> list[str]:
+    parts = re.split(r"_+|(?<=[a-z0-9])(?=[A-Z])", name)
+    return [re.sub(r"\d+$", "", p.lower()) or p.lower() for p in parts if p]
+
+
+def _is_reset_name(name: str) -> bool:
+    return any(t in _RESET_TOKENS for t in _tokens(name))
+
+
+def _is_clock_name(name: str) -> bool:
+    t = _tokens(name)
+    return bool(t) and any(x in _CLOCK_TOKENS for x in t) and t[-1] not in _NOT_CLOCK_LAST
+
+
+def _find_clocks(signals: Iterable[str]) -> list[str]:
+    return sorted(s for s in signals if _is_clock_name(s))
+
+
+def _find_resets(signals: Iterable[str]) -> list[str]:
+    return sorted(s for s in signals if _is_reset_name(s))
+
+
+# --------------------------------------------------------------------------
 # pyslang helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 
 def _compile(code: str):
-    """
-    Parse and semantically analyse *code* with pyslang.
-    Returns (compilation, tree, root).
-    Never raises — pyslang performs error recovery and delivers a best-effort AST
-    even for files with missing includes or vendor extensions.
-    """
+    if pyslang is None:
+        raise RuntimeError("pyslang not installed")
     tree = pyslang.SyntaxTree.fromText(code)
     comp = pyslang.Compilation()
     comp.addSyntaxTree(tree)
@@ -71,28 +108,17 @@ def _compile(code: str):
 
 
 def _kind(sym) -> str:
-    """Return the plain SymbolKind name, e.g. 'Port', 'Variable', 'ProceduralBlock'."""
     return str(sym.kind).rsplit(".", 1)[-1]
 
 
 def _proc_kind(sym) -> str:
-    """Return the plain ProceduralBlockKind name, e.g. 'AlwaysFF'."""
     return str(sym.procedureKind).rsplit(".", 1)[-1]
 
 
 def _sym_offset(sym) -> int | None:
-    """
-    Extract byte offset from a pyslang SourceLocation.
-    Tries three access patterns defensively because pybind11 binding details
-    can differ between pyslang versions.
-    """
     try:
         loc = sym.location
-        for getter in (
-            lambda l: l.offset,
-            lambda l: l.offset(),
-            lambda l: int(l),
-        ):
+        for getter in (lambda l: l.offset, lambda l: l.offset(), lambda l: int(l)):
             try:
                 v = getter(loc)
                 if isinstance(v, (int, float)):
@@ -105,15 +131,10 @@ def _sym_offset(sym) -> int | None:
 
 
 def _offset_to_line(code: str, offset: int) -> int:
-    """Convert a byte offset to a 1-based line number."""
     return code[: max(0, offset)].count("\n") + 1
 
 
 def _iter_members(scope, _depth: int = 0):
-    """
-    Recursively yield all members of a scope.
-    Handles generate blocks and nested scopes up to depth 8.
-    """
     if _depth > 8:
         return
     try:
@@ -126,7 +147,6 @@ def _iter_members(scope, _depth: int = 0):
 
 
 def _port_direction(sym) -> str:
-    """Return port direction as a plain string: 'In', 'Out', 'InOut', etc."""
     try:
         return str(sym.direction).rsplit(".", 1)[-1]
     except Exception:
@@ -134,14 +154,8 @@ def _port_direction(sym) -> str:
 
 
 def _width_from_type(sym) -> str | None:
-    """
-    Extract a vector range string like '3:0' from a pyslang symbol type.
-    Returns None for scalar signals or parameterised widths (e.g. 'ADDR_WIDTH-1:0')
-    since those cannot be checked statically.
-    """
     try:
-        t = str(sym.type)
-        m = re.search(r"\[([^\]]+:[^\]]+)\]", t)
+        m = re.search(r"\[([^\]]+:[^\]]+)\]", str(sym.type))
         if m:
             return m.group(1)
     except Exception:
@@ -149,21 +163,16 @@ def _width_from_type(sym) -> str | None:
     return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Comment stripping
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
+# Comment stripping / block extraction
+# --------------------------------------------------------------------------
 
 def _strip_comments(code: str) -> str:
-    """
-    Remove // and /* */ comments while:
-      - Preserving string-literal contents (avoids false matches on '//' inside strings)
-      - Preserving newlines inside block comments so line numbers stay correct
-        for all downstream analysis
-    """
+    """Remove comments, keep string literals and ALL newlines."""
     out, i, n = [], 0, len(code)
     while i < n:
         c = code[i]
-        if c == '"':                        # string literal — copy verbatim
+        if c == '"':
             out.append(c); i += 1
             while i < n and code[i] != '"':
                 if code[i] == "\\":
@@ -172,10 +181,10 @@ def _strip_comments(code: str) -> str:
                     out.append(code[i]); i += 1
             if i < n:
                 out.append(code[i]); i += 1
-        elif code[i: i + 2] == "//":       # line comment — skip until newline
+        elif code[i: i + 2] == "//":
             while i < n and code[i] != "\n":
                 i += 1
-        elif code[i: i + 2] == "/*":       # block comment — preserve newlines
+        elif code[i: i + 2] == "/*":
             i += 2
             while i < n and code[i: i + 2] != "*/":
                 if code[i] == "\n":
@@ -187,115 +196,138 @@ def _strip_comments(code: str) -> str:
     return "".join(out)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Block text extraction
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _depth_delta(line: str) -> int:
-    """
-    Net begin/end depth change for a single line.
-    Word-boundary regex ensures 'endmodule', 'endcase', 'endfunction', etc.
-    are NOT counted as 'end'.
-    """
     return len(re.findall(r"\bbegin\b", line)) - len(re.findall(r"\bend\b", line))
 
 
 def _extract_block_text(clean_lines: list[str], start_line: int) -> str:
-    """
-    Extract the full always-block body starting at *start_line* (1-based).
-
-    Three cases handled correctly:
-      1. Header + begin/end block       -> accumulate lines until depth returns to 0
-      2. Header with begin on next line -> depth tracking picks it up automatically
-      3. Single-statement body          -> stop at the first line ending with ';'
-
-    A _BLOCK_STARTER guard prevents accidentally consuming the next always block
-    when no begin/end wrapper is present.
-    """
     idx = start_line - 1
     lines = clean_lines[idx:]
     if not lines:
         return ""
-
     text = [lines[0]]
     depth = _depth_delta(lines[0])
     found_begin = depth > 0
-
-    # Header itself is a complete single-line statement
     if not found_begin and lines[0].strip().endswith(";"):
         return lines[0]
-
     for ln in lines[1:]:
-        # Stop if we reach another top-level RTL block in single-statement mode
         if not found_begin and _BLOCK_STARTER.match(ln):
             break
-
         text.append(ln)
         d = _depth_delta(ln)
         depth += d
-
         if not found_begin and d > 0:
-            found_begin = True          # begin found on a continuation line
-
+            found_begin = True
         if found_begin and depth <= 0:
-            break                       # begin/end block fully closed
-
+            break
         if not found_begin and ln.strip().endswith(";"):
-            break                       # single-statement body ended
-
+            break
     return "\n".join(text)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Assignment / statement detection
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
+# Statement level analysis
+# --------------------------------------------------------------------------
+
+def _blank(text: str, start: int, end: int, out: list) -> None:
+    for k in range(start, min(end, len(out))):
+        if out[k] != "\n":
+            out[k] = " "
+
+
+def _blank_constructs(text: str) -> str:
+    """Blank `always...@(...)` headers and `if/for/while/case (...)` heads
+    (balanced parentheses) so only statements remain.  Length and newlines
+    are preserved, so offsets/line numbers stay valid."""
+    out = list(text)
+    for m in re.finditer(
+        r"\balways(?:_ff|_comb|_latch)?\b\s*(?:@\s*\([^)]*\)|@\s*\*)?", text
+    ):
+        _blank(text, m.start(), m.end(), out)
+    for m in re.finditer(
+        r"\b(?:if|for|while|foreach|repeat|case|casez|casex)\s*\(", text
+    ):
+        i = m.end() - 1
+        depth, j = 0, i
+        while j < len(text):
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        _blank(text, m.start(), j + 1, out)
+    return "".join(out)
+
+
+_LEAD = re.compile(
+    r"^\s*(?:begin(?:\s*:\s*\w+)?|end(?:\s*:\s*\w+)?(?!\w)|else(?!\w)|endcase(?!\w)"
+    r"|default\s*:|[A-Za-z_0-9'`$.]+(?:\s*,\s*[A-Za-z_0-9'`$.]+)*\s*:(?!:))"
+)
+_STMT = re.compile(
+    r"^([A-Za-z_]\w*)((?:\s*\[[^\]]*\])*)\s*(<=|(?<![<>=!])=(?!=))\s*(.*)$", re.DOTALL
+)
+
 
 def _assignments(text: str) -> list[dict]:
-    """
-    Return all LHS assignments found in a block of comment-stripped text.
-    Detects both blocking (=) and non-blocking (<=) operators.
-    """
+    """All procedural assignments in a block of comment-free text.
+    Returns dicts: offset (line offset in `text`), lhs, op, rhs, line, indexed."""
+    blanked = _blank_constructs(text)
     result = []
-    _SKIP   = re.compile(r"^\s*(for|while|case|end|//)")
-    _ASSIGN = re.compile(
-        r"\b([A-Za-z_]\w*)\b(?:\s*\[[^\]]+\])?\s*(<=|(?<![<>=!])=(?!=))\s*(.*?);"
-    )
-    for offset, line in enumerate(text.splitlines()):
-        if _SKIP.match(line):
+    for sm in re.finditer(r"[^;]*;", blanked):
+        seg, start = sm.group(0)[:-1], sm.start()
+        while True:
+            m = _LEAD.match(seg)
+            if not m or m.end() == 0:
+                break
+            start += m.end()
+            seg = seg[m.end():]
+        stripped = seg.lstrip()
+        start += len(seg) - len(stripped)
+        am = _STMT.match(stripped)
+        if not am:
             continue
-        m = _ASSIGN.search(line)
-        if m:
-            result.append({
-                "offset": offset,
-                "lhs":    m.group(1),
-                "op":     m.group(2),
-                "rhs":    m.group(3).strip(),
-                "line":   line.strip(),
-            })
+        rhs = " ".join(am.group(4).split())
+        result.append({
+            "offset": text.count("\n", 0, start),
+            "lhs": am.group(1),
+            "op": am.group(3),
+            "rhs": rhs,
+            "line": f"{am.group(1)}{am.group(2)} {am.group(3)} {rhs};".strip(),
+            "indexed": bool(am.group(2).strip()),
+        })
     return result
 
 
 def _continuous_assigns(clean: str) -> list[dict]:
-    """Return all continuous (assign ...) statements from comment-stripped code."""
     result = []
-    pat = re.compile(r"\bassign\s+([A-Za-z_]\w*)(?:\s*\[[^\]]+\])?\s*=\s*(.*?);")
-    for ln_no, line in enumerate(clean.splitlines(), 1):
-        m = pat.search(line)
-        if m:
-            result.append({
-                "line_no": ln_no,
-                "lhs":     m.group(1),
-                "rhs":     m.group(2).strip(),
-                "line":    line.strip(),
-            })
+    pat = re.compile(
+        r"\bassign\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)*=\s*([^;]*);"
+    )
+    for m in pat.finditer(clean):
+        result.append({
+            "line_no": clean.count("\n", 0, m.start()) + 1,
+            "lhs": m.group(1),
+            "rhs": " ".join(m.group(2).split()),
+            "line": " ".join(m.group(0).split()),
+        })
     return result
 
 
+def _unpacked_arrays(clean: str) -> set[str]:
+    """Names declared with unpacked dimensions, e.g. `logic [7:0] mem [DEPTH];`"""
+    arrays: set[str] = set()
+    decl = re.compile(
+        r"^\s*(?:logic|reg|bit|wire|byte|int|integer|[A-Za-z_]\w*_t)\b([^;=]*);", re.M
+    )
+    for m in decl.finditer(clean):
+        for name in re.findall(r"\b([A-Za-z_]\w*)\s*\[", m.group(1)):
+            arrays.add(name)
+    return arrays
+
+
 def _has_default_before_cond(block_text: str, sig: str) -> bool:
-    """
-    Return True if *sig* has an unconditional default assignment
-    before the first if/case statement in the block.
-    """
     for line in block_text.splitlines():
         if re.search(r"\b(if|case)\b", line):
             return False
@@ -307,190 +339,142 @@ def _has_default_before_cond(block_text: str, sig: str) -> bool:
 
 
 def _literal_width_mismatch(lhs_width: str, literal_bits: int) -> bool:
-    """
-    Return True when a literal's declared bit-count does not match a concrete
-    [msb:lsb] range.  Returns False safely for parameterised widths.
-    """
     m = re.match(r"\s*(\d+)\s*:\s*(\d+)\s*$", lhs_width)
     if not m:
-        return False    # parameterised — cannot check statically
-    msb, lsb = int(m.group(1)), int(m.group(2))
-    return abs(msb - lsb) + 1 != literal_bits
+        return False
+    return abs(int(m.group(1)) - int(m.group(2))) + 1 != literal_bits
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Clock / reset heuristics
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _find_clocks(signals: set[str]) -> list[str]:
-    """Identify clock signals using industry-standard naming conventions."""
-    return sorted(s for s in signals if _CLK_PAT.search(s) or _CLK_PFX.match(s))
+_SEQ_EVENT = re.compile(r"@\s*\([^)]*\b(?:posedge|negedge)\b")
 
 
-def _find_resets(signals: set[str]) -> list[str]:
-    """Identify reset signals using industry-standard naming conventions."""
-    return sorted(s for s in signals if _RST_PAT.search(s) or _RST_GEN.search(s))
+def _is_sequential(block: dict) -> bool:
+    if block["kind"] == "ff":
+        return True
+    return block["kind"] == "always" and bool(_SEQ_EVENT.search(block.get("header", "")))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+def _dedupe_findings(items: list[dict]) -> list[dict]:
+    seen = set()
+    out = []
+    for it in items:
+        key = (str(it.get("type", "")).upper(), str(it.get("location", "")))
+        if key not in seen:
+            seen.add(key)
+            out.append(it)
+    return out
+
+
+# --------------------------------------------------------------------------
 # Always-block discovery
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 
 def _find_always_blocks_text(clean: str, clean_lines: list[str]) -> list[dict]:
-    """
-    Text-based fallback for always-block discovery when pyslang cannot provide
-    source offsets (e.g. files with unresolvable `include or missing packages).
-    """
-    _KW    = re.compile(r"^\s*(always(?:_ff|_comb|_latch)?)\b")
-    _KINDS = {
-        "always_ff":    "ff",
-        "always_comb":  "comb",
-        "always_latch": "latch",
-        "always":       "always",
-    }
+    kw = re.compile(r"^\s*(always(?:_ff|_comb|_latch)?)\b")
+    kinds = {"always_ff": "ff", "always_comb": "comb",
+             "always_latch": "latch", "always": "always"}
     blocks = []
     for i, line in enumerate(clean_lines, 1):
-        m = _KW.match(line)
+        m = kw.match(line)
         if m:
-            kind = _KINDS.get(m.group(1), "always")
-            text = _extract_block_text(clean_lines, i)
-            blocks.append({"kind": kind, "line": i, "header": line, "text": text})
+            blocks.append({"kind": kinds.get(m.group(1), "always"), "line": i,
+                           "header": line, "text": _extract_block_text(clean_lines, i)})
     return blocks
 
 
 def _find_always_blocks(code: str) -> list[dict]:
-    """
-    Discover all always blocks using pyslang for accurate kind + source location,
-    then extract block text from comment-stripped code.
-
-    Two-tier strategy:
-      Tier 1 — pyslang semantic model: gives us the exact ProceduralBlockKind
-               (AlwaysFF vs AlwaysComb vs Always) and the precise start offset,
-               which we convert to a line number in the comment-stripped source.
-
-      Tier 2 — Text-based fallback: regex scan of comment-stripped code.
-               Used only when pyslang cannot reach any module (complete parse
-               failure, e.g. undefined macro in top-level context).
-    """
-    clean       = _strip_comments(code)
+    clean = _strip_comments(code)
     clean_lines = clean.splitlines()
-    pyslang_blocks: list[dict] = []
-    pyslang_ok = False
-
+    found: list[dict] = []
+    ok = False
     try:
         _, _, root = _compile(code)
         for inst in root.topInstances:
-            pyslang_ok = True
+            ok = True
             for mem in _iter_members(inst.body):
                 if _kind(mem) != "ProceduralBlock":
                     continue
-                kind   = _PROC_KINDS.get(_proc_kind(mem), "always")
-                offset = _sym_offset(mem)
-                if offset is None:
+                kind = _PROC_KINDS.get(_proc_kind(mem), "always")
+                off = _sym_offset(mem)
+                if off is None:
                     continue
-                line   = _offset_to_line(code, offset)
+                line = _offset_to_line(code, off)
                 header = clean_lines[line - 1] if 0 < line <= len(clean_lines) else ""
-                text   = _extract_block_text(clean_lines, line)
-                pyslang_blocks.append({
-                    "kind": kind, "line": line, "header": header, "text": text
-                })
+                found.append({"kind": kind, "line": line, "header": header,
+                              "text": _extract_block_text(clean_lines, line)})
     except Exception:
         pass
-
-    # If pyslang successfully reached at least one module definition, trust its result
-    # even when that result is an empty list (no always blocks = correct answer)
-    if pyslang_ok:
-        return pyslang_blocks
-
-    # pyslang failed at the module level — fall back to regex text scan
+    if ok:
+        return found
     return _find_always_blocks_text(clean, clean_lines)
 
 
+# --------------------------------------------------------------------------
+# Declared identifiers
+# --------------------------------------------------------------------------
+
 def _extract_declared_identifiers_text(code: str) -> dict:
-    """Text fallback for ports, parameters, and simple signal declarations."""
     clean = _strip_comments(code)
-    module_name = "dut"
+    # one port per line, so several ports on a line are parsed separately
+    clean = re.sub(r",\s*(?=(?:input|output|inout)\b)", ",\n", clean)
     m = re.search(r"\bmodule\s+(\w+)", clean)
-    if m:
-        module_name = m.group(1)
+    module_name = m.group(1) if m else "dut"
 
     signals: set[str] = set()
     outputs: set[str] = set()
+    inputs: set[str] = set()
     parameters: set[str] = set()
     widths: dict[str, str] = {}
 
-    def add_names(fragment: str, dest: set[str], width: str | None = None) -> list[str]:
+    def add_names(fragment, dest, width=None):
         fragment = fragment.split("=", 1)[0] if "=" in fragment else fragment
         fragment = re.sub(r"\[[^\]]+\]", " ", fragment)
         added = []
         for part in fragment.split(","):
-            names = re.findall(r"\b[A-Za-z_]\w*\b", part)
-            names = [n for n in names if n not in KEYWORDS and n not in {"signed", "unsigned"}]
+            names = [n for n in re.findall(r"\b[A-Za-z_]\w*\b", part)
+                     if n not in KEYWORDS]
             if names:
-                name = names[-1]
-                dest.add(name)
-                added.append(name)
+                dest.add(names[-1]); added.append(names[-1])
                 if width:
-                    widths[name] = width
+                    widths[names[-1]] = width
         return added
 
     for line in clean.splitlines():
-        stripped = line.strip().rstrip(",;")
-        if not stripped:
+        s = line.strip().rstrip(",;")
+        if not s:
             continue
-
-        param_match = re.search(r"\b(?:parameter|localparam)\b\s+(.*)", stripped)
-        if param_match:
-            add_names(param_match.group(1), parameters)
+        pm = re.search(r"\b(?:parameter|localparam)\b\s+(.*)", s)
+        if pm:
+            add_names(pm.group(1), parameters)
             continue
-
-        decl_match = re.search(
-            r"\b(?:input|output|inout|wire|reg|logic)\b\s+(.*)", stripped
-        )
-        if decl_match:
-            rest = decl_match.group(1)
-            width_match = re.search(r"\[([^\]]+)\]", rest)
-            names = add_names(rest, signals, width_match.group(1) if width_match else None)
-            if re.search(r"\boutput\b", stripped):
+        dm = re.search(r"\b(?:input|output|inout|wire|reg|logic)\b\s+(.*)", s)
+        tm = re.match(r"^([A-Za-z_]\w*_t)\s+(.+)$", s)      # typedef'd variables
+        if dm or tm:
+            rest = dm.group(1) if dm else tm.group(2)
+            wm = re.search(r"\[([^\]]+)\]", rest)
+            names = add_names(rest, signals, wm.group(1) if wm else None)
+            if re.search(r"\boutput\b", s):
                 outputs.update(names)
+            if re.search(r"\binput\b", s):
+                inputs.update(names)
 
     return {
-        "signals":      sorted(signals),
-        "outputs":      sorted(outputs),
-        "parameters":   sorted(parameters),
-        "widths":       widths,
-        "arrays":       [],
-        "enum_values":  [],
-        "type_aliases": [],
-        "clocks":       _find_clocks(signals),
-        "resets":       _find_resets(signals),
-        "module":       module_name,
+        "signals": sorted(signals), "outputs": sorted(outputs),
+        "inputs": sorted(inputs), "parameters": sorted(parameters),
+        "widths": widths, "arrays": sorted(_unpacked_arrays(clean)),
+        "enum_values": [], "type_aliases": [],
+        "clocks": _find_clocks(signals), "resets": _find_resets(signals),
+        "module": module_name,
     }
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# Public API 
-# ═════════════════════════════════════════════════════════════════════════════
-
 def extract_declared_identifiers(code: str) -> dict:
-    """
-    Extract all declared identifiers from a SystemVerilog module using pyslang.
-
-    Key improvements over the regex approach in rtl_static.py:
-      - Handles multi-line port declarations, packed/unpacked arrays, structs
-      - Correctly separates port vs internal signal vs parameter
-      - Resolves typedef aliases and package imports (when available)
-      - Width information comes from the type system, not fragile regex
-      - Clock/reset detection uses wider industry naming patterns
-
-    Returns the same dict schema as rtl_static.py for backward compatibility.
-    """
-    signals:    set[str]       = set()
-    outputs:    set[str]       = set()
-    parameters: set[str]       = set()
-    widths:     dict[str, str] = {}
+    signals: set[str] = set()
+    outputs: set[str] = set()
+    inputs: set[str] = set()
+    parameters: set[str] = set()
+    widths: dict[str, str] = {}
     module_name = "dut"
-
     try:
         _, _, root = _compile(code)
         for inst in root.topInstances:
@@ -502,8 +486,12 @@ def extract_declared_identifiers(code: str) -> dict:
                     continue
                 if k in ("Port", "Net"):
                     signals.add(n)
-                    if k == "Port" and _port_direction(mem) in ("Out", "Output", "InOut"):
-                        outputs.add(n)
+                    if k == "Port":
+                        d = _port_direction(mem)
+                        if d in ("Out", "Output", "InOut"):
+                            outputs.add(n)
+                        if d in ("In", "Input", "InOut"):
+                            inputs.add(n)
                     w = _width_from_type(mem)
                     if w:
                         widths[n] = w
@@ -515,172 +503,116 @@ def extract_declared_identifiers(code: str) -> dict:
                 elif k in ("Parameter", "Specparam"):
                     parameters.add(n)
     except Exception:
-        # Minimal fallback — at least extract module name
         return _extract_declared_identifiers_text(code)
 
     if not signals and not parameters:
         return _extract_declared_identifiers_text(code)
 
     return {
-        "signals":      sorted(signals),
-        "outputs":      sorted(outputs),
-        "parameters":   sorted(parameters),
-        "widths":       widths,
-        "arrays":       [],          # resolved via pyslang type system, not separate list
-        "enum_values":  [],
-        "type_aliases": [],
-        "clocks":       _find_clocks(signals),
-        "resets":       _find_resets(signals),
-        "module":       module_name,
+        "signals": sorted(signals), "outputs": sorted(outputs),
+        "inputs": sorted(inputs), "parameters": sorted(parameters),
+        "widths": widths, "arrays": sorted(_unpacked_arrays(_strip_comments(code))),
+        "enum_values": [], "type_aliases": [],
+        "clocks": _find_clocks(signals), "resets": _find_resets(signals),
+        "module": module_name,
     }
 
 
+# ==========================================================================
+# Public API
+# ==========================================================================
+
 def static_bug_findings(code: str) -> list[dict]:
-    """
-    Detect common RTL bugs using pyslang for structure discovery and targeted
-    text analysis for assignment / branching patterns inside each block.
-
-    Checks performed:
-      - Blocking (=) assignments inside always_ff
-      - Signals missing from the reset branch of a reset-aware clocked block
-      - Latch inference: incomplete else / no default in always_comb
-      - Multiple drivers on the same signal (continuous + procedural)
-      - Literal width mismatches on continuous assign statements
-      - Undriven output ports (uses pyslang port-direction metadata)
-
-    Key fixes vs rtl_static.py:
-      - Latch check uses `\\belse\\s*(?!if\\b)` so else-if chains no longer
-        suppress the warning incorrectly
-      - Block boundaries are taken from pyslang offsets, not a fragile
-        begin-count heuristic that breaks on endcase/endmodule
-      - Comments are stripped before all text analysis
-    """
     findings: list[dict] = []
-    declared  = extract_declared_identifiers(code)
-    known     = set(declared["signals"])
-    resets    = declared["resets"]
-    clean     = _strip_comments(code)
-    blocks    = _find_always_blocks(code)
+    declared = extract_declared_identifiers(code)
+    known = set(declared["signals"])
+    arrays = set(declared.get("arrays", []))
+    resets = declared["resets"]
+    clean = _strip_comments(code)
+    blocks = _find_always_blocks(code)
 
-    # Helper: parse a SystemVerilog sized literal like 9'b0 / 8'hFF -> (bits, base)
-    _SIZED_LIT = re.compile(r"\b(\d+)\s*'\s*([bBdDhHoO])\s*([0-9a-fA-F_xzXZ]+)\b")
+    def _width_for_range(r: str) -> int | None:
+        m = re.match(r"\s*(\d+)\s*:\s*(\d+)\s*$", r)
+        return abs(int(m.group(1)) - int(m.group(2))) + 1 if m else None
 
-    def _declared_width_for(lhs: str) -> str | None:
-        # Prefer declared widths from the type system. If unknown, no width check.
-        return declared["widths"].get(lhs)
-
-    def _width_for_range(range_str: str) -> int | None:
-        # Only handle concrete ranges like 7:0 or 3:0.
-        # Parameterised ranges like WIDTH-1:0 are not resolvable here.
-        m = re.match(r"\s*(\d+)\s*:\s*(\d+)\s*$", range_str)
+    def _width_from_param_expr(r: str) -> int | None:
+        m = re.match(r"\s*(\w+)\s*-\s*1\s*:\s*0\s*$", r)
         if not m:
             return None
-        msb, lsb = int(m.group(1)), int(m.group(2))
-        return abs(msb - lsb) + 1
+        p = re.search(rf"\b(?:parameter|localparam)\s+(?:\w+\s+)?{re.escape(m.group(1))}\s*=\s*(\d+)", code)
+        return int(p.group(1)) if p else None
 
-    def _width_from_declared_width_expr(range_str: str) -> int | None:
-        # Special-case common pattern: WIDTH-1:0 where WIDTH is defaultable.
-        # This project’s ALU uses `parameter WIDTH = 8`.
-        m = re.match(r"\s*(\w+)\s*-\s*1\s*:\s*0\s*$", range_str)
-        if not m:
-            return None
-        param = m.group(1)
-        # Try to extract param default from module header
-        pm = re.search(rf"\bparameter\s+{re.escape(param)}\s*=\s*(\d+)", code)
-        if not pm:
-            pm = re.search(rf"\blocalparam\s+{re.escape(param)}\s*=\s*(\d+)", code)
-        if not pm:
-            return None
-        return int(pm.group(1))
-
-    def _check_width_mismatch_in_if(expr_line: str, line_no: int) -> None:
-        # Detect patterns like: if (result == 9'b0) or if (result != 9'b0)
-        # Then compare sized literal bit-count with declared width of the signal.
-        # This is conservative: only triggers when we can resolve both signal name and literal width.
-        m = re.search(r"\b([A-Za-z_]\w*)\b\s*([=!]=)\s*(\d+)\s*'\s*([bBdDhHoO])", expr_line) or re.search(r"\bif\b\s*\(\s*([A-Za-z_]\w*)\s*([=!]=)\s*(\d+)\s*'\s*([bBdDhHoO])", expr_line)
+    def _check_width_in_if(expr_line: str, line_no: int) -> None:
+        m = re.search(r"\b([A-Za-z_]\w*)\b\s*([=!]=)\s*(\d+)\s*'\s*[bBdDhHoO]", expr_line)
         if not m:
             return
-        sig = m.group(1)
-        lit_bits = int(m.group(3))
-        w = _declared_width_for(sig)
+        sig, lit_bits = m.group(1), int(m.group(3))
+        w = declared["widths"].get(sig)
         if not w:
             return
-        concrete_w = _width_for_range(w)
-        if concrete_w is None:
-            concrete_w = _width_from_declared_width_expr(w)
-        if concrete_w is None:
-            return
-        if concrete_w != lit_bits:
+        cw = _width_for_range(w)
+        if cw is None:
+            cw = _width_from_param_expr(w)
+        if cw is not None and cw != lit_bits:
             findings.append({
-                "type":     "WIDTH",
+                "type": "WIDTH",
                 "location": f"{sig} at line {line_no}",
-                "problem":  f"{sig} is compared to a {lit_bits}-bit sized literal, but {sig} is declared as [{w}].",
-                "impact":   "Width mismatch can cause truncation or unintended extension during simulation.",
-                "fix":      f"Use a literal resized to [{w}] (or parameterize the literal) so the bit-widths match.",
+                "problem": f"{sig} is compared to a {lit_bits}-bit sized literal, but {sig} is declared as [{w}].",
+                "impact": "Width mismatch can cause truncation or unintended extension during simulation.",
+                "fix": f"Use a literal resized to [{w}] (or parameterize the literal) so the bit-widths match.",
             })
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Main per-always-block analysis
-    # ─────────────────────────────────────────────────────────────────────────
     for block in blocks:
         assigns = _assignments(block["text"])
-        kind    = block["kind"]
+        seq = _is_sequential(block)
 
-        # Width-mismatch in procedural comparisons (e.g. if (result == 9'b0))
-        for rel_i, line in enumerate(block["text"].splitlines()):
-            ln_no = block["line"] + rel_i
-            if "if" not in line:
-                continue
-            _check_width_mismatch_in_if(line.strip(), ln_no)
+        for rel, line in enumerate(block["text"].splitlines()):
+            if re.search(r"\bif\b", line):
+                _check_width_in_if(line.strip(), block["line"] + rel)
 
-        # ── always_ff: blocking assignment check ─────────────────────────────
-        if kind == "ff":
+        if seq:
             for a in assigns:
                 if a["op"] == "=":
                     findings.append({
-                        "type":     "FUNCTIONAL",
+                        "type": "FUNCTIONAL",
                         "location": f"{a['lhs']} at line {block['line'] + a['offset']}",
-                        "problem":  "Blocking assignment (=) used inside always_ff sequential block.",
-                        "impact":   "Can cause simulation/synthesis mismatch; flip-flop behaviour is undefined.",
-                        "fix":      f"Replace '=' with '<=' for {a['lhs']} in this always_ff block.",
+                        "problem": "Blocking assignment (=) used inside clocked sequential block.",
+                        "impact": "Can cause simulation/synthesis mismatch; flip-flop behaviour is undefined.",
+                        "fix": f"Replace '=' with '<=' for {a['lhs']} in this clocked block.",
                     })
-
-            # always_ff: signals not in reset branch
             if resets:
                 rst_pat = "|".join(map(re.escape, resets))
                 if re.search(rf"\bif\s*\(\s*!?\s*(?:{rst_pat})\s*\)", block["text"]):
                     rst_body = re.split(r"\belse\b", block["text"], maxsplit=1)[0]
-                    rst_lhs  = {a["lhs"] for a in _assignments(rst_body)}
-                    all_lhs  = {a["lhs"] for a in assigns if a["lhs"] in known}
+                    rst_lhs = {a["lhs"] for a in _assignments(rst_body)}
+                    all_lhs = {a["lhs"] for a in assigns
+                               if a["lhs"] in known and a["lhs"] not in arrays}
                     for sig in sorted(all_lhs - rst_lhs):
                         findings.append({
-                            "type":     "RESET",
+                            "type": "RESET",
                             "location": f"{sig} in sequential block at line {block['line']}",
-                            "problem":  f"{sig} is updated in a reset-aware block but absent from the reset branch.",
-                            "impact":   "Register holds unknown or stale value after reset.",
-                            "fix":      f"Add a deterministic reset assignment for {sig} inside the reset branch.",
+                            "problem": f"{sig} is updated in a reset-aware block but absent from the reset branch.",
+                            "impact": "Register holds unknown or stale value after reset.",
+                            "fix": f"Add a deterministic reset assignment for {sig} inside the reset branch.",
                         })
-
-        # ── always_comb / always_latch / legacy always: latch check ──────────
-        if kind in ("comb", "latch", "always"):
-            assigned    = {a["lhs"] for a in assigns if a["lhs"] in known}
-            has_cond    = bool(re.search(r"\b(if|case)\b", block["text"]))
-            # FIX: negative lookahead excludes `else if` — only a bare `else` completes all paths
-            bare_else   = bool(re.search(r"\belse\s*(?!if\b)", block["text"]))
+        elif block["kind"] in ("comb", "latch", "always"):
+            assigned = {a["lhs"] for a in assigns if a["lhs"] in known}
+            has_cond = bool(re.search(r"\b(if|case)\b", block["text"]))
+            # `else` NOT followed by `if` (an else-if chain is not a complete else)
+            bare_else = bool(re.search(r"\belse\b(?!\s+if\b)", block["text"]))
             has_default = bool(re.search(r"\bdefault\s*:", block["text"]))
-
             if has_cond and not bare_else and not has_default:
                 for sig in sorted(assigned):
                     if not _has_default_before_cond(block["text"], sig):
                         findings.append({
-                            "type":     "LATCH",
+                            "type": "LATCH",
                             "location": f"{sig} in combinational block at line {block['line']}",
-                            "problem":  f"{sig} is assigned under conditional logic with no complete else or default.",
-                            "impact":   f"Synthesis infers a latch to hold the previous value of {sig}.",
-                            "fix":      f"Add a default assignment for {sig} before the conditional, or add else/default.",
+                            "problem": f"{sig} is assigned under conditional logic with no complete else or default.",
+                            "impact": f"Synthesis infers a latch to hold the previous value of {sig}.",
+                            "fix": f"Add a default assignment for {sig} before the conditional, or add else/default.",
                         })
 
-    # ── Multiple drivers ──────────────────────────────────────────────────────
+    # multiple drivers
     drivers: dict[str, list[str]] = {}
     for a in _continuous_assigns(clean):
         drivers.setdefault(a["lhs"], []).append(f"continuous assign line {a['line_no']}")
@@ -690,543 +622,324 @@ def static_bug_findings(code: str) -> list[dict]:
     for sig, locs in sorted(drivers.items()):
         if sig in known and len(set(locs)) > 1:
             findings.append({
-                "type":     "FUNCTIONAL",
+                "type": "FUNCTIONAL",
                 "location": f"{sig}: {', '.join(sorted(set(locs)))}",
-                "problem":  f"{sig} is driven from multiple sources.",
-                "impact":   "Multiple drivers cause simulation conflicts or non-synthesisable RTL.",
-                "fix":      f"Drive {sig} from exactly one always block or continuous assignment.",
+                "problem": f"{sig} is driven from multiple sources.",
+                "impact": "Multiple drivers cause simulation conflicts or non-synthesisable RTL.",
+                "fix": f"Drive {sig} from exactly one always block or continuous assignment.",
             })
 
-    # ── Literal width mismatches on continuous assigns ────────────────────────
+    # literal width mismatch on continuous assigns
     for a in _continuous_assigns(clean):
-        lw  = declared["widths"].get(a["lhs"])
+        lw = declared["widths"].get(a["lhs"])
         lit = re.search(r"\b(\d+)'[bBdDhHoO][0-9a-fA-F_xzXZ]+\b", a["rhs"])
         if lw and lit and _literal_width_mismatch(lw, int(lit.group(1))):
             findings.append({
-                "type":     "WIDTH",
+                "type": "WIDTH",
                 "location": f"{a['lhs']} at line {a['line_no']}",
-                "problem":  f"{a['lhs']} assigned a {lit.group(1)}-bit literal but declared as [{lw}].",
-                "impact":   "Data truncation or unintended sign extension.",
-                "fix":      f"Match the literal width to [{lw}] or resize the signal intentionally.",
+                "problem": f"{a['lhs']} assigned a {lit.group(1)}-bit literal but declared as [{lw}].",
+                "impact": "Data truncation or unintended sign extension.",
+                "fix": f"Match the literal width to [{lw}] or resize the signal intentionally.",
             })
 
-    # ── Undriven output ports (pyslang port-direction metadata) ───────────────
-    all_driven = (
-        {a["lhs"] for b in blocks for a in _assignments(b["text"])}
-        | {a["lhs"] for a in _continuous_assigns(clean)}
-    )
-    reported_undriven: set[str] = set()
-
-    def _report_undriven_output(name: str) -> None:
-        if not name or name in all_driven or name in reported_undriven:
-            return
-        reported_undriven.add(name)
-        findings.append({
-            "type":     "FUNCTIONAL",
-            "location": f"{name} output port",
-            "problem":  f"Output {name} is declared but never assigned anywhere in the module.",
-            "impact":   "Output will be X or high-Z in simulation and synthesis.",
-            "fix":      f"Drive {name} from an always block or continuous assignment for all conditions.",
-        })
-
+    # undriven outputs
+    all_driven = ({a["lhs"] for b in blocks for a in _assignments(b["text"])}
+                  | {a["lhs"] for a in _continuous_assigns(clean)})
     for name in declared.get("outputs", []):
-        _report_undriven_output(name)
+        if name not in all_driven:
+            findings.append({
+                "type": "FUNCTIONAL",
+                "location": f"{name} output port",
+                "problem": f"Output {name} is declared but never assigned anywhere in the module.",
+                "impact": "Output will be X or high-Z in simulation and synthesis.",
+                "fix": f"Drive {name} from an always block or continuous assignment for all conditions.",
+            })
 
+    # extra deterministic checks (unused inputs, case without default, width literals, multi-bit CDC)
     try:
-        _, _, root = _compile(code)
-        for inst in root.topInstances:
-            for mem in inst.body.members:   # ports are always top-level members
-                if _kind(mem) != "Port":
-                    continue
-                if _port_direction(mem) not in ("Out", "Output", "InOut"):
-                    continue
-                _report_undriven_output(mem.name)
-    except Exception:
+        from src.core.extra_check import bug_extras
+        findings.extend(bug_extras(code))
+    except ImportError:
         pass
 
-    return findings
+    return _dedupe_findings(findings)
 
 
-def static_timing_findings(
-    code: str, bug_findings: list[dict] | None = None
-) -> list[dict]:
-    """
-    Return timing-related issues.
-
-    FIX vs rtl_static.py: accepts pre-computed *bug_findings* to avoid calling
-    static_bug_findings() twice — which caused LATCH findings to appear in both
-    the Bug Analysis and Timing Analysis sections of the report.
-
-    Checks:
-      - Blocking assignments in always_ff  (promoted from bug findings)
-      - Latch inference                    (promoted from bug findings)
-      - Incomplete sensitivity lists in legacy always @(...) blocks
-    """
+def static_timing_findings(code: str, bug_findings: list[dict] | None = None) -> list[dict]:
+    """Timing view of the static findings.  NOTE: blocking-assignment and LATCH
+    findings intentionally appear in BOTH the bug and the timing report; pass
+    `bug_findings` to avoid recomputing them."""
     if bug_findings is None:
         bug_findings = static_bug_findings(code)
-
     issues: list[dict] = []
-
     for bug in bug_findings:
         prob = bug.get("problem", "")
         if "Blocking assignment" in prob or bug.get("type") == "LATCH":
             issues.append({
-                "type":       "BLOCKING" if "Blocking assignment" in prob else "LATCH",
-                "location":   bug["location"],
-                "evidence":   prob,
-                "confidence": "HIGH",
-                "problem":    prob,
-                "risk":       "Can produce timing-dependent simulation mismatch or inferred latch storage.",
-                "fix":        bug["fix"],
+                "type": "BLOCKING" if "Blocking assignment" in prob else "LATCH",
+                "location": bug["location"], "evidence": prob, "confidence": "HIGH",
+                "problem": prob,
+                "risk": "Can produce timing-dependent simulation mismatch or inferred latch storage.",
+                "fix": bug["fix"],
             })
-
-    # Incomplete sensitivity list — only relevant for legacy always @(...) blocks
     declared = extract_declared_identifiers(code)
     for block in _find_always_blocks(code):
         if block["kind"] != "always":
-            continue    # always_ff / always_comb have no manual sensitivity lists
+            continue
         m = re.search(r"@\s*\(([^*)][^)]*)\)", block["header"])
         if not m or re.search(r"posedge|negedge", m.group(1)):
-            continue    # clocked — skip
-        sensitivity = set(re.findall(r"\b[A-Za-z_]\w*\b", m.group(1))) - {"or", "and"}
-        body_refs   = set(re.findall(r"\b[A-Za-z_]\w*\b", block["text"])) & set(declared["signals"])
-        driven_lhs  = {a["lhs"] for a in _assignments(block["text"])}
-        missing     = sorted((body_refs - driven_lhs) - sensitivity)
+            continue
+        sens = set(re.findall(r"\b[A-Za-z_]\w*\b", m.group(1))) - {"or", "and"}
+        refs = set(re.findall(r"\b[A-Za-z_]\w*\b", block["text"])) & set(declared["signals"])
+        driven = {a["lhs"] for a in _assignments(block["text"])}
+        missing = sorted((refs - driven) - sens)
         if missing:
             issues.append({
-                "type":       "SENSITIVITY",
-                "location":   f"always block at line {block['line']}",
-                "evidence":   f"Signals not in sensitivity list: {', '.join(missing[:4])}",
+                "type": "SENSITIVITY",
+                "location": f"always block at line {block['line']}",
+                "evidence": f"Signals not in sensitivity list: {', '.join(missing[:4])}",
                 "confidence": "HIGH",
-                "problem":    "Combinational always block has an incomplete manual sensitivity list.",
-                "risk":       "Simulation uses stale values and disagrees with synthesised combinational logic.",
-                "fix":        "Replace the manual sensitivity list with always_comb or always @(*).",
+                "problem": "Combinational always block has an incomplete manual sensitivity list.",
+                "risk": "Simulation uses stale values and disagrees with synthesised combinational logic.",
+                "fix": "Replace the manual sensitivity list with always_comb or always @(*).",
             })
 
-    return issues
+    # extra timing checks (multi-bit CDC, case without default)
+    try:
+        from src.core.extra_check import timing_extras
+        issues.extend(timing_extras(code))
+    except ImportError:
+        pass
+
+    return _dedupe_findings(issues)
 
 
 def static_assertions(code: str) -> list[dict]:
-    """
-    Generate syntactically correct SVA assertions from the module's structure.
-    Produces up to three assertions: a RESET check and a RANGE/X check.
-    All assertions use the correct concurrent property syntax with disable iff.
-    """
+    """Template SVA for registers that are (a) driven by a clocked block and
+    (b) assigned in that block's reset branch.  Clock, edge and reset polarity
+    come from that block, not from signal names.  Inputs and registers that
+    are never reset are not asserted (they are legitimately X)."""
     meta = extract_declared_identifiers(code)
-    clk  = meta["clocks"][0] if meta["clocks"] else None
-    rst  = meta["resets"][0] if meta["resets"] else None
-    if not clk:
+    arrays = set(meta.get("arrays", []))
+    cands: list[tuple[str, dict]] = []
+    for b in extract_clocking_blocks(code):
+        if not b.get("reset") or not b.get("rst_lhs"):
+            continue
+        for s in sorted(b["rst_lhs"]):
+            if s not in arrays and s != b["clock"] and s != b["reset"]:
+                cands.append((s, b))
+    if not cands:
         return []
 
-    candidates = [s for s in meta["signals"] if s not in {clk, rst}]
-    if not candidates:
-        return []
+    pref = re.compile(r"count|state|ptr|valid|ready|empty|full|out|data|\bq\b", re.I)
+    reset_target = next((c for c in cands if pref.search(c[0])), cands[0])
+    others = [c for c in cands if c[0] != reset_target[0]]
+    range_pref = re.compile(r"count|ptr|state", re.I)
+    range_target = next((c for c in others if range_pref.search(c[0])),
+                        others[0] if others else reset_target)
 
-    active_low   = bool(rst and re.search(r"_n$|_N$|b$|B$", rst))
-    reset_active = f"!{rst}" if active_low else (rst or "1'b0")
+    def reset_expr(b):
+        return f"!{b['reset']}" if b["reset_active_low"] else b["reset"]
 
-    assertions: list[dict] = []
-
-    if rst:
-        target = next(
-            (s for s in candidates
-             if re.search(r"count|state|ptr|valid|ready|empty|full|out|data|\bq\b", s, re.I)),
-            candidates[0],
-        )
-        assertions.append({
-            "type":        "RESET",
-            "signal":      target,
-            "sva_code":    (
-                f"assert property (@(posedge {clk}) disable iff (!({reset_active})) "
-                f"{reset_active} |=> !$isunknown({target}));"
-            ),
-            "description": f"Verifies {target} is known immediately after reset is asserted.",
-        })
-
-    used = {a["signal"] for a in assertions}
-    range_target = next(
-        (s for s in candidates if re.search(r"count|ptr|state", s, re.I) and s not in used),
-        next((s for s in candidates if s not in used), candidates[0]),
-    )
-    assertions.append({
-        "type":        "RANGE",
-        "signal":      range_target,
-        "sva_code":    (
-            f"assert property (@(posedge {clk}) disable iff ({reset_active}) "
-            f"!$isunknown({range_target}));"
-        ),
-        "description": f"Checks {range_target} never becomes X/Z during normal operation.",
+    out = []
+    sig, b = reset_target
+    out.append({
+        "type": "RESET", "signal": sig,
+        "sva_code": f"assert property (@({b['edge'] or 'posedge'} {b['clock']}) "
+                    f"{reset_expr(b)} |=> !$isunknown({sig}));",
+        "description": f"Verifies {sig} is known one cycle after reset is asserted.",
     })
-
-    return assertions[:3]
+    sig, b = range_target
+    out.append({
+        "type": "RANGE", "signal": sig,
+        "sva_code": f"assert property (@({b['edge'] or 'posedge'} {b['clock']}) "
+                    f"disable iff ({reset_expr(b)}) !$isunknown({sig}));",
+        "description": f"Checks {sig} never becomes X/Z once reset is released.",
+    })
+    return out
 
 
 def static_optimizations(code: str) -> list[dict]:
-    """
-    Find hardcoded constants and style issues.
-
-    FIX vs rtl_static.py:
-      1. Reports ALL occurrences, not just the first (removed premature `break`)
-      2. Strips sized literals (8'hFF) before checking for bare decimals,
-         so `if (mode == 2) out = 8'hFF` flags '2' but not '8'
-      3. Skips parameter/localparam lines (those are the correct place for constants)
-    """
     opts: list[dict] = []
     clean = _strip_comments(code)
-
-    _PARAM_LINE = re.compile(r"\b(parameter|localparam)\b")
-    _SIZED_LIT  = re.compile(r"\b\d+'[bdhoBDHO][0-9a-fA-F_xzXZ]+\b", re.I)
-    _BARE_INT   = re.compile(r"(?<![\w'#])\b([1-9]\d+)\b(?![\w'])")
-
+    param_line = re.compile(r"\b(parameter|localparam)\b")
+    sized = re.compile(r"\b\d+'[bdhoBDHO][0-9a-fA-F_xzXZ]+\b", re.I)
+    bare = re.compile(r"(?<![\w'#])\b([1-9]\d+)\b(?![\w'])")
     for ln_no, line in enumerate(clean.splitlines(), 1):
-        if _PARAM_LINE.search(line):
-            continue    # intentional constant — skip
-        stripped = _SIZED_LIT.sub("", line)
-        m = _BARE_INT.search(stripped)
+        if param_line.search(line):
+            continue
+        m = bare.search(sized.sub("", line))
         if m:
             opts.append({
-                "type":       "HARDCODED",
-                "location":   f"line {ln_no}",
-                "issue":      f"Bare decimal literal {m.group(1)} is hardcoded in RTL logic.",
-                "benefit":    "Named parameters make design intent explicit and future resizing safe.",
+                "type": "HARDCODED", "location": f"line {ln_no}",
+                "issue": f"Bare decimal literal {m.group(1)} is hardcoded in RTL logic.",
+                "benefit": "Named parameters make design intent explicit and future resizing safe.",
                 "suggestion": f"Replace {m.group(1)} with a declared parameter or localparam.",
             })
-
     return opts
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LLM output filters  (public API — identical to rtl_static.py)
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
+# LLM output filters
+# --------------------------------------------------------------------------
 
-_FILTER_SKIP = frozenset(
-    {
-        "always", "always_ff", "always_comb", "always_latch", "assign", "begin", "end",
-        "if", "else", "case", "endcase", "default", "posedge", "negedge", "logic", "reg",
-        "wire", "assert", "property", "disable", "iff", "isunknown",
-        "line", "at", "row", "port", "signal", "register", "value", "module", "clock",
-        "reset", "active_low", "active_high", "clock_cycle", "clock_domain", "reset_value",
-        "next_state", "current_state", "output", "input",
-    }
-    | KEYWORDS
-)
+_FILTER_SKIP = frozenset({
+    "always", "always_ff", "always_comb", "always_latch", "assign", "begin", "end",
+    "if", "else", "case", "endcase", "default", "posedge", "negedge", "logic", "reg",
+    "wire", "assert", "property", "disable", "iff", "isunknown",
+    "line", "at", "row", "port", "signal", "register", "value", "module", "clock",
+    "reset", "active_low", "active_high", "clock_cycle", "clock_domain", "reset_value",
+    "next_state", "current_state", "output", "input",
+} | KEYWORDS)
 
 
-def references_only_declared(
-    item: dict, declared: Iterable[str], ignore: Iterable[str] = ()
-) -> bool:
-    """
-    Return True if all identifiers in the key code fields of an LLM finding
-    are either declared signals/parameters or known SV/English keywords.
-    Filters out hallucinated signal names from LLM responses.
-    """
+def references_only_declared(item: dict, declared: Iterable[str], ignore: Iterable[str] = ()) -> bool:
     allowed = set(declared) | set(ignore)
-    code_fields = [str(item.get(k, "")) for k in ("signal", "sva_code")]
+    fields = [str(item.get(k, "")) for k in ("signal", "sva_code")]
     for key in ("fix", "suggestion"):
-        value = str(item.get(key, ""))
-        if re.search(r"[;=<>()[\]{}']|\b(always|assign|if|case|endcase)\b", value):
-            code_fields.append(value)
-    code_fields = " ".join(code_fields)
-    tokens     = {t for t in re.findall(r"\b[A-Za-z_]\w*\b", code_fields) if t not in KEYWORDS}
-    suspicious = tokens - allowed - _FILTER_SKIP
-    return not suspicious
+        v = str(item.get(key, ""))
+        if re.search(r"[;=<>()[\]{}']|\b(always|assign|if|case|endcase)\b", v):
+            fields.append(v)
+    tokens = {t for t in re.findall(r"\b[A-Za-z_]\w*\b", " ".join(fields)) if t not in KEYWORDS}
+    return not (tokens - allowed - _FILTER_SKIP)
 
 
 def extract_clocking_blocks(code: str) -> list[dict]:
-    """Best-effort extraction of clocked always blocks, including:
-    - clock identifier
-    - edge (posedge/negedge)
-    - reset signal + active level (best-effort)
-    - which LHS signals are assigned in reset and non-reset paths
-
-    This is evidence extraction used to validate generated SVA.
-    """
+    """Clocked always blocks with clock, edge, reset (+polarity) and the LHS
+    sets assigned in / outside the reset branch."""
     blocks = []
     declared = extract_declared_identifiers(code)
-    known_signals = set(declared.get("signals", []))
-    clean = _strip_comments(code)
+    known = set(declared.get("signals", []))
+    resets_decl = set(declared.get("resets", []))
 
     for blk in _find_always_blocks(code):
-        if blk.get("kind") not in ("ff", "always"):
+        kind = blk.get("kind")
+        if kind not in ("ff", "always"):
             continue
+        text, header = blk.get("text", ""), blk.get("header", "")
 
-        text = blk.get("text", "")
-        header = blk.get("header", "")
+        events = re.findall(r"\b(posedge|negedge)\s+([A-Za-z_]\w*)", header)
+        if kind == "always" and not events:
+            continue                      # combinational always @(*)
 
-        # 1) Identify clock + edge from header (legacy always @(...))
-        # always_ff may not have header sensitivity in this text extraction.
-        clk = None
-        edge = None
-        m = re.search(r"@\s*\(\s*([^)]*)\)", header)
-        sens = m.group(1) if m else ""
-        if sens:
-            if "posedge" in sens:
-                edge = "posedge"
-            if "negedge" in sens:
-                edge = "negedge"
-            # pick first identifier that looks like a signal
-            cand = re.findall(r"\b[A-Za-z_]\w*\b", sens)
-            cand = [c for c in cand if c not in {"or", "and"}]
-            for c in cand:
-                if c in known_signals:
-                    clk = c
-                    break
+        clk = edge = None
+        for e, s in events:               # clock = first event that is not a reset
+            if s not in resets_decl:
+                clk, edge = s, e
+                break
+        if clk is None and events:
+            edge, clk = events[0]
+        if clk is None:                   # always_ff without visible event list
+            if not declared.get("clocks"):
+                continue
+            clk, edge = declared["clocks"][0], "posedge"
 
-        # If header didn't reveal clock, fall back to naming-based clock heuristic.
-        # (Still evidence-bound because we validate matches to these blocks.)
-        if not clk:
-            clocks = declared.get("clocks", [])
-            if clocks:
-                clk = clocks[0]
-                edge = edge or "posedge"
-
-        if not clk:
-            continue
-
-        # 2) Find reset condition in the block text
-        # Search for `if (<rst>)` or `if (!<rst>)`.
-        reset = None
-        reset_active_low = False
-        rst_candidates = declared.get("resets", [])
-        # Prefer explicit matches in text
-        for r in rst_candidates:
+        reset, active_low = None, False
+        for r in sorted(resets_decl):
             if re.search(rf"\bif\s*\(\s*!\s*{re.escape(r)}\s*\)", text):
-                reset = r
-                reset_active_low = True
+                reset, active_low = r, True
                 break
             if re.search(rf"\bif\s*\(\s*{re.escape(r)}\s*\)", text):
-                reset = r
-                reset_active_low = False
+                reset, active_low = r, False
                 break
+        if reset is None:                 # asynchronous reset from the event list
+            for e, s in events:
+                if s != clk and s in resets_decl:
+                    reset, active_low = s, (e == "negedge")
+                    break
 
-        # 3) Partition assignments by reset branch (best-effort)
-        rst_lhs = set()
-        non_rst_lhs = set()
-
-        if reset:
-            # split at first else (if any) — best effort for simple structures
-            # Find the first if(reset) ... else ... block region.
-            # If pattern not found, we conservatively treat as non-reset only.
-            if re.search(rf"\bif\s*\(\s*!?\s*{re.escape(reset)}\s*\)", text):
-                # approximate reset body as everything from the reset-if line up to else
-                parts = re.split(r"\belse\b", text, maxsplit=1)
-                rst_body = parts[0]
-                rst_lhs = {a["lhs"] for a in _assignments(rst_body) if a["lhs"] in known_signals}
-                # non-reset body is remaining after else, if present
-                if len(parts) > 1:
-                    non_rst_body = parts[1]
-                    non_rst_lhs = {a["lhs"] for a in _assignments(non_rst_body) if a["lhs"] in known_signals}
-
-        # Also add all assignments to non_rst if we couldn't separate
-        all_lhs = {a["lhs"] for a in _assignments(text) if a["lhs"] in known_signals}
+        rst_lhs: set[str] = set()
+        non_rst_lhs: set[str] = set()
+        all_lhs = {a["lhs"] for a in _assignments(text) if a["lhs"] in known}
+        if reset and re.search(rf"\bif\s*\(\s*!?\s*{re.escape(reset)}\s*\)", text):
+            parts = re.split(r"\belse\b", text, maxsplit=1)
+            rst_lhs = {a["lhs"] for a in _assignments(parts[0]) if a["lhs"] in known}
+            if len(parts) > 1:
+                non_rst_lhs = {a["lhs"] for a in _assignments(parts[1]) if a["lhs"] in known}
         if not non_rst_lhs:
             non_rst_lhs = all_lhs
 
         blocks.append({
-            "kind": "clocked_ff",
-            "line": blk.get("line"),
-            "clock": clk,
-            "edge": edge,
-            "reset": reset,
-            "reset_active_low": reset_active_low,
-            "rst_lhs": rst_lhs,
-            "non_rst_lhs": non_rst_lhs,
+            "kind": "clocked_ff", "line": blk.get("line"), "clock": clk, "edge": edge,
+            "reset": reset, "reset_active_low": active_low,
+            "rst_lhs": rst_lhs, "non_rst_lhs": non_rst_lhs,
         })
-
     return blocks
 
 
-def _extract_identifiers_from_sva_expr(sva_code: str) -> set[str]:
-    # Extract candidate signal-like identifiers from inside sva_code.
-    # This is for evidence binding; we still validate membership via extract_clocking_blocks.
-    return {t for t in re.findall(r"\b[A-Za-z_]\w*\b", sva_code) if t}
-
-
 def extract_sva_clock_reset_target(sva_code: str) -> dict:
-    """Parse generated SVA string to extract clock/reset polarity and target.
-
-    This is intentionally strict: if we can't confidently identify reset polarity,
-    we return reset=None so validators can reject reset-aware assertions.
-    """
-    # Clock: @(posedge X) or @(negedge X)
     mclk = re.search(r"@\s*\(\s*(posedge|negedge)\s+([A-Za-z_]\w*)\s*\)", sva_code)
-    clk = mclk.group(2) if mclk else None
-    edge = mclk.group(1) if mclk else None
-
-    # Reset: disable iff (<expr>)
     mrst = re.search(r"disable\s+iff\s*\(\s*([^)]*)\)", sva_code)
-    disable_expr = mrst.group(1).strip() if mrst else None
-
-    reset = None
-    reset_active_low = False
-
-    if disable_expr:
-        # Detect exact-ish patterns produced by your own agent:
-        #   disable iff (!({reset_active})) where reset_active is rst_n or rst
-        #   disable iff ({reset_active})
-        # Normalize a bit and then match.
-        expr = disable_expr.replace(" ", "")
-
-        # Pattern: !rst_n  or !rst
+    reset, active_low = None, False
+    if mrst:
+        expr = mrst.group(1).replace(" ", "")
         m1 = re.fullmatch(r"!\(?([A-Za-z_]\w*)\)?", expr)
+        m2 = re.fullmatch(r"\(?([A-Za-z_]\w*)\)?", expr)
         if m1:
-            reset = m1.group(1)
-            reset_active_low = True
-        else:
-            # Pattern: rst_n  or rst
-            m2 = re.fullmatch(r"\(?([A-Za-z_]\w*)\)?", expr)
-            if m2:
-                reset = m2.group(1)
-                reset_active_low = False
-
-    # Target from !$isunknown(target) or $isunknown(target)
-    mtarget = re.search(r"\$isunknown\s*\(\s*([A-Za-z_]\w*)\s*\)", sva_code)
-    target = mtarget.group(1) if mtarget else None
-
-    return {
-        "clock": clk,
-        "edge": edge,
-        "reset": reset,
-        "reset_active_low": reset_active_low,
-        "target": target,
-    }
-
+            reset, active_low = m1.group(1), True
+        elif m2:
+            reset = m2.group(1)
+    mt = re.search(r"\$isunknown\s*\(\s*([A-Za-z_]\w*)\s*\)", sva_code)
+    return {"clock": mclk.group(2) if mclk else None,
+            "edge": mclk.group(1) if mclk else None,
+            "reset": reset, "reset_active_low": active_low,
+            "target": mt.group(1) if mt else None}
 
 
 def validate_sva_against_rtl(code: str, assertion: dict) -> bool:
-    """Evidence-based validation for SVA assertions.
-
-    Reject if any of the following evidence checks fail:
-    - clock in SVA doesn't match a clocked always_ff/always block
-    - reset polarity doesn't match reset-aware branch condition (when reset present)
-    - target signal isn't driven in the appropriate branch
-    """
     sva = str(assertion.get("sva_code", ""))
     if not sva or "assert property" not in sva:
         return False
-
     parsed = extract_sva_clock_reset_target(sva)
-    if not parsed.get("clock") or not parsed.get("edge"):
+    if not parsed.get("clock") or not parsed.get("edge") or not parsed.get("target"):
         return False
-    if not parsed.get("target"):
-        return False
-
-    cb = extract_clocking_blocks(code)
-    for blk in cb:
+    for blk in extract_clocking_blocks(code):
         if blk.get("clock") != parsed["clock"]:
             continue
-        if blk.get("edge") and parsed["edge"] and blk.get("edge") != parsed["edge"]:
+        if blk.get("edge") and blk["edge"] != parsed["edge"]:
             continue
-
-        # If SVA mentions reset, require match (identifier + polarity)
         if parsed.get("reset"):
             if blk.get("reset") != parsed["reset"]:
                 continue
             if blk.get("reset_active_low") != parsed["reset_active_low"]:
                 continue
-
-        # Drive evidence:
-        # If it looks like a reset assertion (the SVA contains '|=>' and $isunknown),
-        # we treat it as target-after-reset is known.
-        # Otherwise, require non-reset drive.
-        target = parsed["target"]
-        if target in blk.get("non_rst_lhs", set()):
-            # For reset assertions, also require it appears in reset branch.
-            if "|=>" in sva and (parsed.get("reset") or "disable iff" in sva):
-                if target in blk.get("rst_lhs", set()):
-                    return True
-                # if we can't separate rst/non-rst, allow non_rst only
-                return True
+        if parsed["target"] in blk.get("non_rst_lhs", set()) | blk.get("rst_lhs", set()):
             return True
-
     return False
 
 
 def validate_immediate_assertions_against_rtl(code: str, assertion: dict) -> bool:
-    """Evidence-bound validation for combinational *immediate* assertions.
-
-    We only accept immediate assertions that:
-    - contain `assert (` in `sva_code`
-    - do NOT contain `assert property`
-    - reference only identifiers declared in this RTL
-
-    This prevents hallucinated signal names for combinational modules
-    where concurrent SVA cannot be validated via clocking evidence.
-    """
     raw = str(assertion.get("sva_code", ""))
-    if not raw:
+    if not raw or "assert property" in raw or "assert (" not in raw:
         return False
-    if "assert property" in raw:
-        return False
-    if "assert" not in raw or "assert (" not in raw:
-        return False
-
-    declared = extract_declared_identifiers(code)
-    allowed = set(declared.get("signals", [])) | set(declared.get("parameters", []))
-
-    tokens = {t for t in re.findall(r"\b[A-Za-z_]\w*\b", raw)}
-    tokens = {t for t in tokens if t not in KEYWORDS}
-
-    return tokens.issubset(allowed)
+    d = extract_declared_identifiers(code)
+    allowed = set(d.get("signals", [])) | set(d.get("parameters", []))
+    tokens = {t for t in re.findall(r"\b[A-Za-z_]\w*\b", raw) if t not in KEYWORDS}
+    return tokens.issubset(allowed | {"assert", "else", "error", "fatal", "display"})
 
 
 def validate_optimization_against_rtl(code: str, optimization: dict) -> bool:
-    """Evidence-based filter for optimizer outputs.
-
-    Two acceptance paths:
-
-    Path 1 (HARDCODED): accept if it matches a deterministic static finding
-    from static_optimizations() — this only ever detects hardcoded literal
-    values, so this path is unchanged from the original behavior.
-
-    Path 2 (NAMING / REDUNDANT / MISSING_COMMENTS / STYLE): these categories
-    are asked for in the optimizer prompt but static_optimizations() cannot
-    detect them at all. Previously such findings were rejected unconditionally
-    because this function required a matching static finding to exist first.
-    Instead, validate these via declared-identifier grounding (the same
-    anti-hallucination check used by the bug/timing agents): the finding is
-    accepted only if every identifier it references is actually declared in
-    this RTL module, so we still reject hallucinated signal/parameter names,
-    just without requiring a static-analysis match that can't exist for
-    these categories.
-    """
+    """HARDCODED must match a static finding; NAMING/REDUNDANT/COMMENTS/MISSING_COMMENTS/
+    STYLE are accepted when they reference only declared identifiers."""
     issue_type = str(optimization.get("type", "")).upper()
-
-    # Path 1: matches an existing static (HARDCODED) finding.
-    static = static_optimizations(code)
-    if static:
-        issue = str(optimization.get("issue", "")).lower()
-        for f in static:
-            if str(f.get("type", "")).lower() in issue or str(f.get("issue", "")).lower().split()[0] in issue:
-                return True
-
-    # Path 2: LLM-only categories, validated by declared-identifier grounding
-    # instead of requiring a matching static finding.
-    if issue_type in {"NAMING", "REDUNDANT", "MISSING_COMMENTS", "STYLE"}:
-        declared = (
-            set(extract_declared_identifiers(code)["signals"])
-            | set(extract_declared_identifiers(code)["parameters"])
-        )
-        return references_only_declared(optimization, declared)
-
+    if issue_type == "HARDCODED":
+        text = (str(optimization.get("issue", "")) + " " + str(optimization.get("suggestion", ""))).lower()
+        return bool(static_optimizations(code)) and any(
+            w in text for w in ("hardcod", "literal", "magic", "constant", "parameter"))
+    if issue_type in {"NAMING", "REDUNDANT", "COMMENTS", "MISSING_COMMENTS", "STYLE"}:
+        d = extract_declared_identifiers(code)
+        return references_only_declared(optimization, set(d["signals"]) | set(d["parameters"]))
     return False
 
 
 def is_concrete_finding(item: dict, declared: Iterable[str]) -> bool:
-    """Deprecated heuristic. Kept for backward compatibility only."""
-    text = " ".join(
-        str(item.get(k, "")) for k in (
-            "location", "problem", "impact", "fix",
-            "evidence", "risk", "issue", "suggestion"
-        )
-    ).lower()
-    vague = (
-        "some other issues", "may have issues", "quality enhancement",
-        "needs improvement", "improve quality", "could not identify",
-        "might be problematic", "review further",
-    )
+    """Deprecated heuristic, kept for backward compatibility."""
+    text = " ".join(str(item.get(k, "")) for k in (
+        "location", "problem", "impact", "fix", "evidence", "risk", "issue", "suggestion")).lower()
+    vague = ("some other issues", "may have issues", "quality enhancement",
+             "needs improvement", "improve quality", "could not identify",
+             "might be problematic", "review further")
     if any(p in text for p in vague):
         return False
-    has_loc = any(kw in text for kw in ("line", "always", "assign", "case", "block"))
-    has_sig = any(n.lower() in text for n in declared)
-    return has_loc or has_sig
+    return (any(k in text for k in ("line", "always", "assign", "case", "block"))
+            or any(n.lower() in text for n in declared))
