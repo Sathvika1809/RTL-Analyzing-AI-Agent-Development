@@ -1,5 +1,6 @@
 <div align="center">
-# RTL Analysis AI Agent Development
+
+## RTL Analysis AI Agent Development
 
 **A hybrid static-analysis and local-LLM multi-agent framework for
 Verilog/SystemVerilog verification, bug detection, assertion generation,
