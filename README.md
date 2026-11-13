@@ -1,4 +1,4 @@
-::: {align="center"}
+<div align="center">
 # RTL Analysis AI Agent Development
 
 **A hybrid static-analysis and local-LLM multi-agent framework for
