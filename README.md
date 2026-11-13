@@ -11,7 +11,7 @@ and automated repair.**
 ![Ollama](https://img.shields.io/badge/LLM-Ollama%20(Local)-black?style=flat-square&logo=ollama)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 :::
-
+</div>
 ------------------------------------------------------------------------
 
 ## Overview
